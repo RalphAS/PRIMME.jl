@@ -4,7 +4,7 @@ using LinearAlgebra
 
 # const libprimme = joinpath(dirname(@__FILE__()), "../deps/primme/lib/libprimme")
 
-const libprimme = "/home/rasmith/wrk/primme-3.2/lib/libprimme.so"
+const libprimme = "/scratch/build/primme-3.2/lib/libprimme.so"
 
 const PRIMME_INT = Int # might be wrong. Should be detected.
 
@@ -340,14 +340,12 @@ free(r::Ref{C_params}) = ccall((:primme_free, libprimme), Cvoid, (Ptr{C_params},
 function eigs_initialize()
     r = Ref{C_params}()
     ccall((:primme_initialize, libprimme), Cvoid, (Ptr{C_params},), r)
-    finalizer(free, r)
     return r
 end
 
 function svds_initialize()
     r = Ref{C_svds_params}()
     ccall((:primme_svds_initialize, libprimme), Cvoid, (Ptr{C_svds_params},), r)
-    finalizer(free, r)
     return r
 end
 
@@ -368,15 +366,6 @@ function matrixMatvec(xp, ldxp, yp, ldyp, blockSizep, trp, parp, ierrp)
     unsafe_store!(ierrp, 0)
     return nothing
 end
-_fp_ = @cfunction(matrixMatvec, Cvoid,
-        (Ptr{Float64}, Ptr{Int}, Ptr{Float64}, Ptr{Int}, Ptr{Cint}, Ptr{Cint},
-         Ptr{C_svds_params}, Ptr{Cint}))
-
-_efp_ = @cfunction(matrixMatvec, Cvoid,
-        (Ptr{Float64}, Ptr{Int}, Ptr{Float64}, Ptr{Int}, Ptr{Cint}, Ptr{Cint},
-         Ptr{C_params}, Ptr{Cint}))
-
-@show _efp_
 
 _print(r::Ref{C_params}) = ccall((:primme_display_params, libprimme), Cvoid, (C_params,), r[])
 
@@ -419,29 +408,43 @@ function _svds(r::Ref{C_svds_params})
         reshape(svecs[(r[].numOrthoConst + nConv)*m + r[].numOrthoConst*n + (1:(n*nConv))], n, nConv)
 end
 
-function svds(A::AbstractMatrix, k = 5; tol = 1e-12, maxBlockSize = 2k, debuglevel::Int = 0, method::Svds_operator = svds_op_AtA)
+function svds(A::AbstractMatrix, k = 5; tol = 1e-12, maxBlockSize = 2k, verbosity::Int = 0, method::Svds_operator = svds_op_AtA)
+    mul_fp = @cfunction(matrixMatvec, Cvoid,
+        (Ptr{Float64}, Ptr{Int}, Ptr{Float64}, Ptr{Int}, Ptr{Cint}, Ptr{Cint},
+         Ptr{C_svds_params}, Ptr{Cint}))
     r = svds_initialize()
-    if debuglevel > 1
+    if verbosity > 1
         @info "barely initialized config"
         _print(r)
     end
     _A_[]            = A
     r[:m]            = size(A, 1)
     r[:n]            = size(A, 2)
-    r[:matrixMatvec] = _fp_
+    r[:matrixMatvec] = mul_fp
     r[:numSvals]     = k
-    r[:printLevel]   = debuglevel
+    r[:printLevel]   = verbosity
     r[:eps]          = tol
     r[:maxBlockSize] = maxBlockSize
     r[:method]       = method
-    if debuglevel > 0
+    if verbosity > 0
         _print(r)
     end
     out = _svds(r)
-    if debuglevel > 0
+    if verbosity > 0
         _print(r)
     end
+    free(r)
     return out
+end
+
+function matrixMatvecE(xp::Ptr{Float64}, ldxp::Ptr{PRIMME_INT}, yp::Ptr{Float64}, ldyp::Ptr{PRIMME_INT}, blockSizep::Ptr{Cint}, parp::Ptr{C_params}, ierrp::Ptr{Cint})
+    ldx, ldy           = unsafe_load(ldxp), unsafe_load(ldyp)
+    blockSize, par = Int(unsafe_load(blockSizep)), unsafe_load(parp)
+    x, y = unsafe_wrap(Array, xp, (ldx, blockSize)), unsafe_wrap(Array, yp, (ldy, blockSize))
+
+    mul!( view(y, 1:par.nLocal, :), _A_[], view(x, 1:par.nLocal, :))
+    unsafe_store!(ierrp, 0)
+    return nothing
 end
 
 function _eigs(r::Ref{C_params})
@@ -458,30 +461,38 @@ function _eigs(r::Ref{C_params})
     end
 
     nConv = Int(r[].initSize)
+    if nConv < k
+        vals = vals[1:nConv]
+    end
 
-    return vals, reshape(vecs[1:n*nConv],n, nConv)
+    return vals, reshape(vecs[1:n*nConv],n, nConv), Int(err)
 end
 
-function eigs(A::AbstractMatrix, k = 5; tol = 1e-12, maxBlockSize = 2k, debuglevel::Int = 0)
+function eigs(A::AbstractMatrix, k = 5; tol = 1e-12, maxBlockSize = 2k, verbosity::Int = 0)
+    mul_fp = @cfunction(matrixMatvecE, Cvoid,
+        (Ptr{Float64}, Ptr{Int}, Ptr{Float64}, Ptr{Int}, Ptr{Cint},
+         Ptr{C_params}, Ptr{Cint}))
+
     r = eigs_initialize()
-    if debuglevel > 1
-        @info "barely initialized config"
-        _print(r)
-    end
     _A_[]            = A
     r[:n]            = size(A, 2)
-    r[:matrixMatvec] = _efp_
+    r[:matrixMatvec] = mul_fp
     r[:numEvals]     = k
-    r[:printLevel]   = debuglevel
+    r[:printLevel]   = verbosity
     r[:eps]          = tol
     r[:maxBlockSize] = maxBlockSize
-    if debuglevel > 0
+
+    r[:maxOuterIterations] = 100
+    r[:maxMatvecs] = 1000
+    r[:target] = largest
+    if verbosity > 0
         _print(r)
     end
     out = _eigs(r)
-    if debuglevel > 0
+    if verbosity > 0
         _print(r)
     end
+    free(r)
     return out
 end
 
