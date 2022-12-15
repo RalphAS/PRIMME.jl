@@ -43,8 +43,9 @@ end
                                          method = [Primme.svds_op_AAt, Primme.svds_op_AtA, Primme.svds_op_augmented]
         A = randn(m, n)
         svdPrimme = Primme.svds(A, k, method = method)
+        nconv = size(svdPrimme[1],2)
         svdLAPACK = svd(A)
-        @test svdLAPACK[2][1:k] ≈ svdPrimme[2]
-        @test abs.(svdLAPACK[1][:, 1:k]'svdPrimme[1]) ≈ eye(k)
+        @test svdLAPACK.S[1:nconv] ≈ svdPrimme[2]
+        @test abs.(svdLAPACK.U[:, 1:nconv]'svdPrimme[1]) ≈ Matrix{Float64}(I,nconv,nconv)
     end
 end
