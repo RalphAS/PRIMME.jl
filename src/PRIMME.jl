@@ -2,9 +2,10 @@ module PRIMME
 
 using LinearAlgebra
 
-# const libprimme = joinpath(dirname(@__FILE__()), "../deps/primme/lib/libprimme")
+using PRIMME_jll
 
-const libprimme = "/scratch/build/primme-3.2/lib/libprimme.so"
+const libprimme = PRIMME_jll.libprimme
+# const libprimme = "/scratch/build/primme-3.2/lib/libprimme.so"
 
 include("types.jl")
 

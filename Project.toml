@@ -5,9 +5,11 @@ version = "0.1.0"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+PRIMME_jll = "9916bc9e-ef43-57a6-9be0-2f3f923f8145"
 
 [compat]
 julia = "1"
+PRIMME_jll = "3.2"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
