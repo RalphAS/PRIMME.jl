@@ -1,3 +1,19 @@
+# types for PRIMME.jl
+
+# FIXME: this should be exported from JLL
+const PRIMME_INT = Int
+
+"""
+    PRIMMEException
+
+Exception thrown when a call to the PRIMME library fails. The `error_code` field
+may be looked up in the PRIMME documentation for further explanation.
+"""
+struct PRIMMEException <: Exception
+    error_code::Int
+    function_name::Symbol
+end
+
 abstract type PrimmeCStruct end
 
 # This is shameful. To be replaced with lenses.
@@ -9,16 +25,13 @@ function Base.setindex!(r::Ref{T}, x, sym::Symbol) where T<:PrimmeCStruct
         throw(ArgumentError("no such field"))
     end
     o  = fieldoffset(T, i)
-    # AN had this, but we need to set first field in C_params
-    # if o == 0
-    #     throw(ArgumentError("no such field"))
-    # end
     S = fieldtype(T, i)
+    if x isa AbstractVector
+        x = tuple(x...)
+    end
     unsafe_store!(convert(Ptr{S}, pp + o), x)
     return x
 end
-
-const PRIMME_INT = Int # might be wrong. Should be detected.
 
 @enum(Target,
     smallest,        # leftmost eigenvalues */
@@ -102,6 +115,38 @@ struct C_stats <: PrimmeCStruct
     maxConvTol::Cdouble              # largest norm residual of a locked eigenpair
     estimateResidualError::Cdouble   # accumulated error in V and W
     lockingIssue::PRIMME_INT         # Some converged with a weak criterion
+end
+
+# as member or in container
+function Base.show(io::IO, s::C_stats)
+    print(io,s.numOuterIterations," outer it., ",
+          s.numRestarts," restarts, ", s.numMatvecs, " MV, ", s.numPreconds, " preconds...")
+end
+# standalone
+function Base.show(io::IO, ::MIME"text/plain", s::C_stats)
+    np = s.numPreconds
+    ng = s.numGlobalSum
+    print(io, "PRIMME statistics:\n  ",
+          s.numOuterIterations," outer iter., ", s.numRestarts, " restarts\n  ",
+          s.numMatvecs," matvecs, ", s.numPreconds, " preconds\n  ",
+          s.numGlobalSum," global sum calls, ", s.numBroadcast, " broadcast calls  \n"
+          )
+    if ng > 0
+        print(io, s.volumeGlobalSum," summed, time: ", s.timeGlobalSum, "\n  ",
+              s.volumeBroadcast, " broadcast, time: ", s.timeBroadcast, "\n  ")
+    end
+    print(io, s.flopsDense, " FLOPS (VWXR), ", s.numOrthoInnerProds, " orth. inner prod\n  ",
+          "total time: ", s.elapsedTime, ", matvec time: ", s.timeMatvec,"\n  ",
+          "precond time: ", s.timePrecond, ", orth. time: ", s.timeOrtho,
+          "VWXR time: ", s.timeDense,"\n ",
+          "estimated min. Eval: ", s.estimateMinEVal, ", max. Eval: ", s.estimateMaxEVal,
+          ", max. Sval: ", s.estimateLargestSVal,"\n  ",
+          ", estimated B norm: ", s.estimateBNorm, ", inv(B): ", s.estimateInvBNorm,"\n  ",
+          ", max resid: ", s.maxConvTol, "   accumulated: ", s.estimateResidualError)
+    if s.lockingIssue != 0
+        print(io, " some pairs did not fully converge (lockingIssue = ", s.lockingIssue,
+              ")")
+    end
 end
 
 struct JD_projectors
@@ -226,10 +271,70 @@ struct C_params <: PrimmeCStruct
     profile::Ptr{Cvoid} # char *profile; regex with functions to monitor times
 end
 
+"""
+    EigsPresetMethod
+
+method selector for PRIMME eigs functions
+
+An `enum` with the following values (see PRIMME documentation for interpretation):
+* default_method,
+* dynamic_method,
+* default_min_time,
+* default_min_matvecs,
+* Arnoldi_method,
+* GD_methd,
+* GD_plusK_method,
+* GD_Olsen_plusK,
+* JD_Olsen_plusK,
+* RQI_method,
+* JDQR_method,
+* JDQMR_method,
+* JDQMR_ETol,
+* steepest_descent,
+* LOBPCG_OrthoBasis,
+* LOBPCG_OrthoBasis_Window
+"""
+@enum(EigsPresetMethod,
+   default_method,
+   dynamic_method,
+   default_min_time,
+   default_min_matvecs,
+   Arnoldi_method,
+   GD_methd,
+   GD_plusK_method,
+   GD_Olsen_plusK,
+   JD_Olsen_plusK,
+   RQI_method,
+   JDQR_method,
+   JDQMR_method,
+   JDQMR_ETol,
+   steepest_descent,
+   LOBPCG_OrthoBasis,
+   LOBPCG_OrthoBasis_Window
+)
+
 @enum(Svds_target,
     svds_largest,
     svds_smallest,
     svds_closest_abs
+)
+
+"""
+    SvdsPresetMethod
+
+method specifier for PRIMME svds functions
+
+An `enum` with the following values:
+   * `svds_default` set as `svds_hybrid`
+   * `svds_normalequations` work with `A'*A` or `A*A'`
+   * `svds_augmented` work with `[0 A'; A 0]`
+   * `svds_hybrid` start with normal equations, then refine with augmented
+"""
+@enum(SvdsPresetMethod,
+   svds_default,
+   svds_hybrid,
+   svds_normalequations, # At*A or A*At
+   svds_augmented
 )
 
 @enum(Svds_operator,
