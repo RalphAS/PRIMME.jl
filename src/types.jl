@@ -117,34 +117,60 @@ struct C_stats <: PrimmeCStruct
     lockingIssue::PRIMME_INT         # Some converged with a weak criterion
 end
 
+struct C_svds_stats <: PrimmeCStruct
+    numOuterIterations::PRIMME_INT
+    numRestarts::PRIMME_INT
+    numMatvecs::PRIMME_INT
+    numPreconds::PRIMME_INT
+    numGlobalSum::PRIMME_INT         # times called globalSumR
+    numBroadcast::PRIMME_INT         # times called broadcastR
+    volumeGlobalSum::PRIMME_INT      # number of SCALARs reduced by globalSumReal
+    volumeBroadcast::PRIMME_INT      # number broadcast by broadCastReal
+    numOrthoInnerProds::Cdouble      # number of inner prods done by Ortho
+    elapsedTime::Cdouble
+    timeMatvec::Cdouble              # time expend by matrixMatvec
+    timePrecond::Cdouble             # time expend by applyPreconditioner
+    timeOrtho::Cdouble               # time expend by ortho
+    timeGlobalSum::Cdouble           # time expend by globalSumReal
+    timeBroadcast::Cdouble           # time expend by broadcastReal
+    lockingIssue::PRIMME_INT         # Some converged with a weak criterion
+end
+
+const PrimmeStats = Union{C_stats, C_svds_stats}
 # as member or in container
-function Base.show(io::IO, s::C_stats)
+function Base.show(io::IO, s::PrimmeStats)
     print(io,s.numOuterIterations," outer it., ",
           s.numRestarts," restarts, ", s.numMatvecs, " MV, ", s.numPreconds, " preconds...")
 end
 # standalone
-function Base.show(io::IO, ::MIME"text/plain", s::C_stats)
+function Base.show(io::IO, ::MIME"text/plain", s::PrimmeStats)
     np = s.numPreconds
     ng = s.numGlobalSum
     print(io, "PRIMME statistics:\n  ",
           s.numOuterIterations," outer iter., ", s.numRestarts, " restarts\n  ",
           s.numMatvecs," matvecs, ", s.numPreconds, " preconds\n  ",
-          s.numGlobalSum," global sum calls, ", s.numBroadcast, " broadcast calls  \n"
+          s.numGlobalSum," global sum calls, ", s.numBroadcast, " broadcast calls  \n  "
           )
     if ng > 0
         print(io, s.volumeGlobalSum," summed, time: ", s.timeGlobalSum, "\n  ",
               s.volumeBroadcast, " broadcast, time: ", s.timeBroadcast, "\n  ")
     end
-    print(io, s.flopsDense, " FLOPS (VWXR), ", s.numOrthoInnerProds, " orth. inner prod\n  ",
+    print(io, s.numOrthoInnerProds, " orth. inner prod\n  ",
           "total time: ", s.elapsedTime, ", matvec time: ", s.timeMatvec,"\n  ",
-          "precond time: ", s.timePrecond, ", orth. time: ", s.timeOrtho,
-          "VWXR time: ", s.timeDense,"\n ",
-          "estimated min. Eval: ", s.estimateMinEVal, ", max. Eval: ", s.estimateMaxEVal,
-          ", max. Sval: ", s.estimateLargestSVal,"\n  ",
-          ", estimated B norm: ", s.estimateBNorm, ", inv(B): ", s.estimateInvBNorm,"\n  ",
-          ", max resid: ", s.maxConvTol, "   accumulated: ", s.estimateResidualError)
+          "precond time: ", s.timePrecond, ", orth. time: ", s.timeOrtho)
+    if isa(s, C_params)
+        println(io, "\n  VWXR time: ", s.timeDense,
+                ", FLOPS (VWXR), ", s.flopsDense, "\n  ",
+                "estimated min. Eval: ", s.estimateMinEVal,
+                ", max. Eval: ", s.estimateMaxEVal,
+                "\n  max. Sval: ", s.estimateLargestSVal,"\n  ",
+                "estimated B norm: ", s.estimateBNorm,
+                ", inv(B): ", s.estimateInvBNorm,"\n  ",
+                "max resid: ", s.maxConvTol,
+                "   accumulated: ", s.estimateResidualError)
+    end
     if s.lockingIssue != 0
-        print(io, " some pairs did not fully converge (lockingIssue = ", s.lockingIssue,
+        print(io, "\n  some pairs did not fully converge (lockingIssue = ", s.lockingIssue,
               ")")
     end
 end
@@ -343,25 +369,6 @@ An `enum` with the following values:
     svds_op_AAt,
     svds_op_augmented
 )
-
-struct C_svds_stats <: PrimmeCStruct
-    numOuterIterations::PRIMME_INT
-    numRestarts::PRIMME_INT
-    numMatvecs::PRIMME_INT
-    numPreconds::PRIMME_INT
-    numGlobalSum::PRIMME_INT         # times called globalSumR
-    numBroadcast::PRIMME_INT         # times called broadcastR
-    volumeGlobalSum::PRIMME_INT      # number of SCALARs reduced by globalSumReal
-    volumeBroadcast::PRIMME_INT      # number broadcast by broadCastReal
-    numOrthoInnerProds::Cdouble      # number of inner prods done by Ortho
-    elapsedTime::Cdouble
-    timeMatvec::Cdouble              # time expend by matrixMatvec
-    timePrecond::Cdouble             # time expend by applyPreconditioner
-    timeOrtho::Cdouble               # time expend by ortho
-    timeGlobalSum::Cdouble           # time expend by globalSumReal
-    timeBroadcast::Cdouble           # time expend by broadcastReal
-    lockingIssue::PRIMME_INT         # Some converged with a weak criterion
-end
 
 struct C_svds_params <: PrimmeCStruct
     # Low interface: configuration for the eigensolver
