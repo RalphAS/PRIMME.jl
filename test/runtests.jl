@@ -61,8 +61,7 @@ end
 end
 
 @testset "svds, various methods" begin
-    @testset "svds m=$m, n=$n, k=$k" for n in [200, 400],
-                                         m in [200, 400],
+    @testset "svds m=$m, n=$n, k=$k" for (m,n) in ((200,200),(200,400),(400,200)),
                                          k = [1,10],
                                          method = [PRIMME.svds_hybrid, PRIMME.svds_normalequations, PRIMME.svds_augmented]
         A = randn(m, n)
@@ -72,8 +71,46 @@ end
         svdLAPACK = svd(A)
         @test svdLAPACK.S[1:nconv] ≈ svdPrimme[2]
         @test abs.(svdLAPACK.U[:, 1:nconv]'svdPrimme[1]) ≈ Matrix{Float64}(I,nconv,nconv)
+        @test abs.(svdLAPACK.V[:, 1:nconv]'svdPrimme[3]) ≈ Matrix{Float64}(I,nconv,nconv)
     end
 end
+
+@testset "svds, :SR $T" for T in [Float64, ComplexF64]
+    @testset "svds m=$m, n=$n" for (m,n) in ((200,200),(200,400),(400,200))
+        k = 2
+        mn = min(m,n)
+        A = randn(T, m, n)
+        U,S,V,resids,stats = PRIMME.svds(A, k, verbosity = 1, which=:SR)
+        nconv = size(U,2)
+        @test nconv == k
+        svalsLAPACK = svdvals(A)
+        @test svalsLAPACK[mn:-1:mn-nconv+1] ≈ S
+        @test norm(A * V - U * Diagonal(S)) < max(m,n) * 1e-6
+    end
+end
+
+@testset "svds, :SM $T" for T in [Float64, ComplexF64]
+    @testset "svds m=$m, n=$n"  for (m,n) in ((200,200),(200,400),(400,200))
+        k = 2
+        mn = min(m,n)
+        # interior singular values of randn(m,n) are just TOO random
+        u,_ = qr!(randn(T,m,m))
+        v,_ = qr!(randn(T,n,n))
+        d = collect(1:mn)
+        A = u * diagm(m,n,d) * v'
+        svalsLAPACK = svdvals(A)
+        itgt = mn >> 1
+        # bias to avoid ambiguous ordering
+        tgt = (3//5) * svalsLAPACK[itgt] + (2//5) * svalsLAPACK[itgt+1]
+        idxp = sortperm(abs.(svalsLAPACK .- tgt))
+        U,S,V,resids,stats = PRIMME.svds(A, k, verbosity = 1, which=:SM, sigma=tgt)
+        nconv = size(U,2)
+        @test nconv == k
+        @test svalsLAPACK[idxp[1:nconv]] ≈ S
+        @test norm(A * V - U * Diagonal(S)) < max(m,n) * 1e-6
+    end
+end
+
 
 @testset "eigs w/ $(length(tgts)) shift(s) $T" for T in [Float64, ComplexF64], tgts in (25.2, [26.1, 40.2])
     n = 50
@@ -135,6 +172,4 @@ end
     vecsLAPACK = E.vectors[:,idx[1:nconv]]
     @test valsLAPACK ≈ eigPrimme[1]
     @test abs.(vecsLAPACK'eigPrimme[2]) ≈ Matrix{Float64}(I,nconv,nconv)
-
-
 end
