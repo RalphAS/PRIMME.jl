@@ -44,15 +44,44 @@ for (func, elty, relty) in
      (:zprimme_svds, :ComplexF64, :Float64),
      )
     @eval begin
-function _svds(r::Ref{C_svds_params}, ::Type{$elty})
+function _svds(r::Ref{C_svds_params}, ::Type{$elty};
+               v0=nothing, verbosity=1, unconvThrows=true, fullStats=false)
     m, n, k = r[].m, r[].n, r[].numSvals
+    nlocal = r[].nLocal
+    if nlocal <= 0
+        nlocal = n
+    end
+    mlocal = r[].mLocal
+    if mlocal <= 0
+        mlocal = m
+    end
+    nconstr = r[].numOrthoConst
+    nvec = nconstr+k
     svals  = Vector{$relty}(undef, k)
-    svecs  = rand($elty, m + n, k)
+
+    if v0 === nothing
+        if nconstr > 0
+            throw(ArgumentError("orthogonal constraint vectors must be provided in v0"))
+        end
+        # does this matter if we don't set initSize?
+        localVecs  = rand($elty, (mlocal + nlocal) * k)
+    else
+        if eltype(v0) != $elty
+            throw(ArgumentError("v0 must have eltype $elty"))
+        end
+        nmin = (mlocal + nlocal) * nvec
+        if prod(size(v0)) < nmin
+            throw(ArgumentError("initial vector set must have at least $nmin elements"))
+        end
+        localVecs = v0
+    end
+
     rnorms = Vector{$relty}(undef, k)
 
     err = ccall((@_fnq($func), libprimme), Cint,
         (Ptr{$relty}, Ptr{$elty}, Ptr{$relty}, Ptr{C_svds_params}),
-         svals, svecs, rnorms, r)
+         svals, localVecs, rnorms, r)
+
     if err != 0
         free(r)
         throw(PRIMMEException(Int(err), :dprimme_svds))
@@ -63,14 +92,19 @@ function _svds(r::Ref{C_svds_params}, ::Type{$elty})
         svals = svals[1:nConv]
     end
     nConst = r[].numOrthoConst
-    return (reshape(svecs[nConst*m .+ (1:(m*nConv))], m, nConv),
+    loffset = nConst*mlocal
+    roffset = (nConst + nConv)*mlocal + nConst*nlocal
+    return (reshape(localVecs[loffset .+ (1:(mlocal*nConv))], mlocal, nConv),
             svals,
-            reshape(svecs[((nConst + nConv)*m + nConst*n) .+ (1:(n*nConv))], n, nConv),
+            reshape(localVecs[roffset .+ (1:(nlocal*nConv))], nlocal, nConv),
             rnorms,
             r[].stats)
 end
     end # eval block
 end # type loop
+
+_wrap_matvec_svds(A::Ptr{Cvoid}) = A
+_wrap_matvec_svds(A::Base.CFunction) = A
 
 function _wrap_matvec_svds(A::AbstractMatrix{T}) where {T}
     # matrix-vector product, y = a * x (or y = a^t * x), where
@@ -149,29 +183,45 @@ and `stats`, a structure with an account of the work done.
  - `:SM`: closest to `sigma` (or 0 if not provided)
  - `:LM`: largest magnitude (default)
 """
-function svds(A::AbstractMatrix{T}, k = 5;
+function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
+              elt = nothing, m = nothing, n = nothing, # usu. get from A
+              which = :LR,
               tol = 1e-12,
+              sigma::Union{Nothing,Real} = nothing,
               maxBasisSize = nothing,
               verbosity::Int = 0,
               method::Union{Nothing,SvdsPresetMethod} = nothing,
               method1::Union{Nothing,EigsPresetMethod} = nothing,
               method2::Union{Nothing,EigsPresetMethod} = nothing,
               maxMatvecs = 10000,
-              which = :LR,
               shifts = nothing,
               sigma::Union{Nothing,Real} = nothing,
               P = nothing,
               ) where {T}
+    if A isa Ptr
+        if elt === nothing || n === nothing || m === nothing
+            throw(ArgumentError("elt, m, and n must be specified if A is a pointer"))
+        end
+        T = elt
+    else
+        T = eltype(A)
+        m, n = size(A)
+    end
     RT = real(T)
     r = svds_initialize()
     mul_fp = _wrap_matvec_svds(A)
-    r[:m]            = size(A, 1)
-    r[:n]            = size(A, 2)
+    r[:m]            = m
+    r[:n]            = n
     r[:numSvals]     = k
-    if which in (:LR, :LM)
+    if which == :LR
         r[:target] = svds_largest
+        # docs claim targetShifts are ignored in these cases, but if we call _print
+        # for debugging the pointer dereferencing makes for confusion
+        # so let's make it valid.
+        shifts = [zero(RT)]
     elseif which == :SR
         r[:target] = svds_smallest
+        shifts = [zero(RT)]
     elseif which == :SM
         r[:target] = svds_closest_abs
         if sigma !== nothing
@@ -195,7 +245,9 @@ function svds(A::AbstractMatrix{T}, k = 5;
         shiftsx = Vector{RT}(undef,nshifts)
         shiftsx .= shifts
         r[:numTargetShifts] = nshifts
+        r[:targetShifts] = pointer(shiftsx)
     else
+        r[:numTargetShifts] = 0
         shiftsx = Vector{RT}(undef,0)
     end
 
@@ -218,6 +270,14 @@ function svds(A::AbstractMatrix{T}, k = 5;
         r[:maxBasisSize] = maxBasisSize
     end
 
+    # and now for a genuine footgun
+    for (k,v) in kwargs
+        if k in fieldnames(C_svds_params)
+            r[k] = v
+        else
+            throw(ArgumentError("invalid keyword $k; not a field of C_svds_params"))
+        end
+    end
     @GC.preserve mul_fp precon_fp shiftsx begin
         r[:matrixMatvec] = Base.unsafe_convert(Ptr{Cvoid}, mul_fp)
         if shifts !== nothing
@@ -236,15 +296,37 @@ for (func, elty, relty) in
     @eval begin
 function _eigs(r::Ref{C_params},::Type{$elty})
     n, k = r[].n, r[].numEvals
+    nlocal = r[].nLocal
+    if nlocal <= 0
+        nlocal = n
+    end
+    nconstr = r[].numOrthoConst
+    nvec = nconstr+k
     vals  = Vector{$relty}(undef, k)
-    vecs  = rand($elty, n, k)
+    if v0 === nothing
+        if nconstr > 0
+            throw(ArgumentError("orthogonal constraint vectors must be provided in v0"))
+        end
+        localVecs  = rand($elty, nlocal, nvec)
+    else
+        if eltype(v0) != $elty
+            throw(ArgumentError("v0 must have eltype $elty"))
+        end
+        if size(v0) != (nlocal, nconstr+k)
+            throw(ArgumentError("initial vectors must have size ($nlocal,$nvec)"))
+        end
+        localVecs = v0
+        if norm(view(localVecs,1:nlocal,nconstr+1:nvec)) == 0
+            localVecs[1:nlocal,nconstr+1:nvec] .= rand($elty, nlocal, k)
+        end
+    end
     rnorms = Vector{$relty}(undef, k)
 
     local err
     try
         err = ccall((@_fnq($func), libprimme), Cint,
                     (Ptr{$elty}, Ptr{$elty}, Ptr{$relty}, Ptr{C_params}),
-                    vals, vecs, rnorms, r)
+                    vals, localVecs, rnorms, r)
     catch JE
         # Julia errors are presumably from MV or callbacks, so it should be
         # safe to call free()
@@ -265,13 +347,17 @@ function _eigs(r::Ref{C_params},::Type{$elty})
     end
 
     stats = r[].stats
-    return vals, reshape(vecs[1:n*nConv],n, nConv), rnorms, stats
+
+    return vals, localVecs[1:nlocal, nconstr+1:nconstr+nRet], rnorms, stats
 end
     end # eval block
 end # type loop
 
 const witches = Dict( :LA => largest, :LM => largest_abs, :SA => smallest,
                       :CGT => closest_geq, :CLT => closest_leq, :SM => closest_abs )
+
+_wrap_matvec(A::Ptr{Cvoid}) = A
+_wrap_matvec(A::Base.CFunction) = A
 
 function _wrap_matvec(A::AbstractMatrix{T}) where {T}
     function mv(xp::Ptr{Tmv}, ldxp::Ptr{PRIMME_INT},
@@ -424,7 +510,8 @@ Returns `Λ`, a vector of `k` eigenvalues; `V`, a `k×n` matrix of eigenvectors;
 - `B`: mass matrix
 - `verbosity::Int`: detail of diagnostics to report to standard output [`reportLevel`]
 """
-function eigs(A::AbstractMatrix{T}, k::Integer = 5;
+function eigs(A::Union{Ptr{Nothing},AbstractMatrix}, k::Integer = 5;
+              elt = nothing, n = nothing, # usu. get from A
               which::Symbol = :default,
               tol = 1e-12,
               sigma::Union{Nothing,Real}=nothing,
@@ -442,7 +529,22 @@ function eigs(A::AbstractMatrix{T}, k::Integer = 5;
     RT = real(T)
     if (T <: Real && !issymmetric(A)) || !ishermitian(A)
         throw(ArgumentError("matrix/operator must be Hermitian"))
+    if A isa Ptr
+        if elt === nothing || n === nothing
+            throw(ArgumentError("elt and n must be specified if A is a pointer"))
+        end
+        T = elt
+    else
+        T = eltype(A)
+        n = size(A, 2)
+        if size(A, 1) != n
+            throw(ArgumentError("this is an eigensolver, and your matrix is not square."))
+        end
+        if (T <: Real && !issymmetric(A)) || !ishermitian(A)
+            throw(ArgumentError("matrix/operator must be Hermitian"))
+        end
     end
+    RT = real(T)
     if k <= 0
         throw(ArgumentError("k must be positive"))
     end
@@ -465,7 +567,7 @@ function eigs(A::AbstractMatrix{T}, k::Integer = 5;
     end
 
     r = eigs_initialize()
-    r[:n]            = size(A, 2)
+    r[:n]            = n
     r[:numEvals]     = k
     r[:eps]          = tol
 
@@ -486,7 +588,9 @@ function eigs(A::AbstractMatrix{T}, k::Integer = 5;
         shiftsx = Vector{RT}(undef,nshifts)
         shiftsx .= shifts
         r[:numTargetShifts] = nshifts
+        r[:targetShifts] = pointer(shiftsx)
     else
+        r[:numTargetShifts] = 0
         shiftsx = Vector{RT}(undef,0)
     end
     if which in keys(witches)
@@ -507,6 +611,15 @@ function eigs(A::AbstractMatrix{T}, k::Integer = 5;
         r[:maxMatvecs] = maxMatvecs
     end
 
+    # and now for a genuine footgun
+    for (k,v) in kwargs
+        if k in fieldnames(C_params)
+            r[k] = v
+        else
+            throw(ArgumentError("invalid keyword $k; not a field of C_params"))
+        end
+    end
+
     @GC.preserve mul_fp Bmul_fp precon_fp shiftsx begin
         r[:matrixMatvec] = Base.unsafe_convert(Ptr{Cvoid}, mul_fp)
         if B !== nothing
@@ -518,9 +631,6 @@ function eigs(A::AbstractMatrix{T}, k::Integer = 5;
             cr = Ref(r[].correctionParams)
             cr[:precondition] = 1
             r[:correctionParams] = cr[]
-        end
-        if shifts !== nothing
-            r[:targetShifts] = pointer(shiftsx)
         end
         if method !== nothing
             # following examples, we call this last
