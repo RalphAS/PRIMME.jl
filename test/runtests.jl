@@ -33,6 +33,21 @@ end
   end
 end
 
+@testset "unconverged returns" begin
+    let n=200, k=10
+        A = randn(n, n)
+        A = 0.5 * (A + A')
+        svdPrimme = (@test_logs (:info,r"did not converge") PRIMME.svds(A, k, verbosity = 1, maxMatvecs=2, unconvThrows=false))
+        nconv = size(svdPrimme[1],2)
+        @test nconv < k
+        @test_throws PRIMME.PRIMMEException PRIMME.svds(A, k, verbosity = 1, maxMatvecs=2, unconvThrows=true)
+        eigsPrimme = (@test_logs (:info,r"did not converge") PRIMME.eigs(A, k, verbosity = 1, maxMatvecs=2, unconvThrows=false))
+        nconv = size(eigsPrimme[1],2)
+        @test nconv < k
+        @test_throws PRIMME.PRIMMEException PRIMME.eigs(A, k, verbosity = 1, maxMatvecs=2, unconvThrows=true)
+    end
+end
+
 @testset "eigs, 'which' specified" begin
     @testset "eigs n=$n which=$which" for n in [200],
                                           which in [:SA, :LA, :SM, :LM]

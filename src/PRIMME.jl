@@ -3,8 +3,9 @@ module PRIMME
 using LinearAlgebra
 
 using PRIMME_jll
-
 const libprimme = PRIMME_jll.libprimme
+
+# for debugging
 # const libprimme = "/scratch/build/primme-3.2/lib/libprimme.so"
 
 include("types.jl")
@@ -83,8 +84,15 @@ function _svds(r::Ref{C_svds_params}, ::Type{$elty};
          svals, localVecs, rnorms, r)
 
     if err != 0
-        free(r)
-        throw(PRIMMEException(Int(err), :dprimme_svds))
+        infoRet = err in (-3, -103, -203)
+        if infoRet && (verbosity > 0) && (r[].procID == 0)
+                @info "some triplets did not converge in allowed maxMatvecs"
+                show(r[].stats); println()
+        end
+        if unconvThrows || !infoRet
+            free(r)
+            throw(PRIMMEException(Int(err), @_fnq($func)))
+        end
     end
 
     nConv = Int(r[].initSize)
@@ -94,11 +102,16 @@ function _svds(r::Ref{C_svds_params}, ::Type{$elty};
     nConst = r[].numOrthoConst
     loffset = nConst*mlocal
     roffset = (nConst + nConv)*mlocal + nConst*nlocal
+    if fullStats
+        stats = (r[].stats, r[].primme.stats, r[].primmeStage2.stats)
+    else
+        stats = r[].stats
+    end
     return (reshape(localVecs[loffset .+ (1:(mlocal*nConv))], mlocal, nConv),
             svals,
             reshape(localVecs[roffset .+ (1:(nlocal*nConv))], nlocal, nConv),
             rnorms,
-            r[].stats)
+            stats)
 end
     end # eval block
 end # type loop
@@ -202,6 +215,8 @@ and `stats`, a structure with an account of the work done.
  - `:SA`: smallest algebraic
  - `:SM`: closest to `sigma` (or 0 if not provided)
  - `:LM`: largest magnitude (default)
+- `unconvThrows::Bool`: if true, convergence failure raises an exception
+- lots of others I have not explained yet
 """
 function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
               elt = nothing, m = nothing, n = nothing, # usu. get from A
@@ -215,9 +230,13 @@ function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
               method2::Union{Nothing,EigsPresetMethod} = nothing,
               maxMatvecs = 10000,
               shifts = nothing,
-              sigma::Union{Nothing,Real} = nothing,
-              P = nothing,
-              ) where {T}
+              P_AtA = nothing,
+              P_AAt = nothing,
+              P_B = nothing,
+              fullStats = false,
+              unconvThrows = false,
+              kwargs...
+              )
     if A isa Ptr
         if elt === nothing || n === nothing || m === nothing
             throw(ArgumentError("elt, m, and n must be specified if A is a pointer"))
@@ -251,11 +270,11 @@ function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
             shifts = [zero(RT)]
         end
     else
-        throw(ArgumentError("which must be one of (:LR, :LM, :SR, :SM)"))
+        throw(ArgumentError("argument 'which' must be one of (:LR, :SR, :SM)"))
     end
 
-    if P !== nothing
-        throw(ArgumentError("preconditioning is not yet implemented"))
+    if (P_AtA !== nothing) || (P_AAt !== nothing) || (P_B !== nothing)
+        precon_fp = _wrap_matldivs_svds(P_AtA, P_AAt, P_B)
     else
         precon_fp = Ptr{Cvoid}()
     end
@@ -300,10 +319,7 @@ function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
     end
     @GC.preserve mul_fp precon_fp shiftsx begin
         r[:matrixMatvec] = Base.unsafe_convert(Ptr{Cvoid}, mul_fp)
-        if shifts !== nothing
-            r[:targetShifts] = pointer(shiftsx)
-        end
-        out = _svds(r, T)
+        out = _svds(r, T; fullStats=fullStats, unconvThrows=unconvThrows, verbosity=verbosity)
     end
     free(r)
     return out
@@ -314,7 +330,8 @@ for (func, elty, relty) in
      (:zprimme, :ComplexF64, :Float64),
      )
     @eval begin
-function _eigs(r::Ref{C_params},::Type{$elty})
+function _eigs(r::Ref{C_params},::Type{$elty};
+                       v0=nothing, verbosity=1, unconvThrows=true)
     n, k = r[].n, r[].numEvals
     nlocal = r[].nLocal
     if nlocal <= 0
@@ -354,16 +371,22 @@ function _eigs(r::Ref{C_params},::Type{$elty})
         rethrow(JE)
     end
     if err != 0
-        free(r)
-        if err == -3
-            @show r[].stats
+        infoRet = err == -3
+        if infoRet && (verbosity > 0) && (r[].procID == 0)
+            @info "some pairs did not converge in allowed maxMatvecs"
+            show(r[].stats); println()
         end
-        throw(PRIMMEException(Int(err), @_fnq($func)))
+        if unconvThrows || !infoRet
+            free(r)
+            throw(PRIMMEException(Int(err), @_fnq($func)))
+        end
     end
 
     nConv = Int(r[].initSize)
-    if nConv < k
-        vals = vals[1:nConv]
+    # CHECKME: maybe optionally return partially converged results too
+    nRet = nConv
+    if nRet < k
+        vals = vals[1:nRet]
     end
 
     stats = r[].stats
@@ -529,6 +552,7 @@ Returns `Λ`, a vector of `k` eigenvalues; `V`, a `k×n` matrix of eigenvectors;
 - `P`: preconditioning matrix or (preferably) factorization
 - `B`: mass matrix
 - `verbosity::Int`: detail of diagnostics to report to standard output [`reportLevel`]
+- `unconvThrows::Bool`: if true, convergence failure raises an exception
 """
 function eigs(A::Union{Ptr{Nothing},AbstractMatrix}, k::Integer = 5;
               elt = nothing, n = nothing, # usu. get from A
@@ -543,12 +567,11 @@ function eigs(A::Union{Ptr{Nothing},AbstractMatrix}, k::Integer = 5;
               method::Union{Nothing,EigsPresetMethod}=nothing,
               P::Union{Nothing,AbstractMatrix,Factorization}=nothing,
               P2::Union{Nothing,AbstractMatrix,Factorization}=nothing,
-              B::Union{Nothing,AbstractMatrix{T}}=nothing,
+              B::Union{Nothing,AbstractMatrix}=nothing,
               skipchecks=false,
-              ) where {T}
-    RT = real(T)
-    if (T <: Real && !issymmetric(A)) || !ishermitian(A)
-        throw(ArgumentError("matrix/operator must be Hermitian"))
+              unconvThrows = true,
+              kwargs...
+              )
     if A isa Ptr
         if elt === nothing || n === nothing
             throw(ArgumentError("elt and n must be specified if A is a pointer"))
@@ -661,8 +684,8 @@ function eigs(A::Union{Ptr{Nothing},AbstractMatrix}, k::Integer = 5;
                 throw(ArgumentError("illegal value of preset method"))
             end
         end
-
-        out = _eigs(r, T)
+        # @show r[]
+        out = _eigs(r, T; unconvThrows=unconvThrows, verbosity=verbosity)
     end
     free(r)
     return out
