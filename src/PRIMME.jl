@@ -130,11 +130,25 @@ function _wrap_matvec_svds(A::AbstractMatrix{T}) where {T}
          Ptr{C_svds_params}, Ptr{Cint}))
 end
 
-function _wrap_matldiv_svds(P::Union{AbstractMatrix{T},Factorization{T}}) where {T}
-    if P isa AbstractMatrix
-        PF = factorize(P)
+function _wrap_matldivs_svds(
+    P_AtA::Union{Nothing,AbstractMatrix{T},Factorization{T}},
+    P_AAt::Union{Nothing,AbstractMatrix{T},Factorization{T}},
+    P_B::Union{Nothing,AbstractMatrix{T},Factorization{T}}
+) where {T}
+    if P_AtA isa AbstractMatrix
+        PF_AtA = factorize(P_AtA)
     else
-        PF = P
+        PF_AtA = P_AtA
+    end
+    if P_AAt isa AbstractMatrix
+        PF_AAt = factorize(P_AAt)
+    else
+        PF_AAt = P_AAt
+    end
+    if P_B isa AbstractMatrix
+        PF_B = factorize(P_B)
+    else
+        PF_B = P_B
     end
     function mvP(xp::Ptr{Tmv}, ldxp::Ptr{PRIMME_INT},
                  yp::Ptr{Tmv}, ldyp::Ptr{PRIMME_INT},
@@ -147,13 +161,19 @@ function _wrap_matldiv_svds(P::Union{AbstractMatrix{T},Factorization{T}}) where 
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
         copyto!(view(y, 1:par.nLocal, :), view(x, 1:par.nLocal, :))
         if mode == Cint(svds_op_AtA)
-            ldiv!(PF, view(y, 1:par.nLocal, :))
+            if PF_AtA !== nothing
+                ldiv!(PF_AtA, view(y, 1:par.nLocal, :))
+            end
             unsafe_store!(ierrp, 0)
-        elseif mode == Cint(svds_op_AtA)
-            ldiv!(PF, view(y, 1:par.nLocal, :))
+        elseif mode == Cint(svds_op_AAt)
+            if PF_AAt !== nothing
+                ldiv!(PF_AAt, view(y, 1:par.nLocal, :))
+            end
             unsafe_store!(ierrp, 0)
-        elseif mode == Cint(svds_op_AtA)
-            ldiv!(PF, view(y, 1:par.nLocal, :))
+        elseif mode == Cint(svds_op_augmented)
+            if PF_B !== nothing
+                ldiv!(PF_B, view(y, 1:par.nLocal, :))
+            end
             unsafe_store!(ierrp, 0)
         else
             unsafe_store!(ierrp, -1)
@@ -161,7 +181,7 @@ function _wrap_matldiv_svds(P::Union{AbstractMatrix{T},Factorization{T}}) where 
         return nothing
     end
     ldiv_fp = @cfunction($mvP, Cvoid,
-                           (Ptr{T}, Ptr{Int}, Ptr{T}, Ptr{Int}, Ptr{Cint},
+                           (Ptr{T}, Ptr{Int}, Ptr{T}, Ptr{Int}, Ptr{Cint}, Ptr{Cint},
                             Ptr{C_params}, Ptr{Cint}))
     return ldiv_fp
 end
