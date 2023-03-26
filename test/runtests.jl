@@ -4,32 +4,38 @@ using PRIMME
 
 # do some basic tests first to fail quickly and succinctly on simple errors
 
-@testset "basic svds $T" for T in [Float64, ComplexF64]
+@testset "basic svds $T" for T in [Float64, ComplexF64, Float32, ComplexF32]
     let n=200, m=200, k=10
         A = randn(T, m, n)
-        svdPrimme = PRIMME.svds(A, k, verbosity = 1)
-        nconv = size(svdPrimme[1],2)
-        svdLAPACK = svd(A)
-        @test svdLAPACK.S[1:k] ≈ svdPrimme[2]
-        @test abs.(svdLAPACK.U[:, 1:k]'svdPrimme[1]) ≈ Matrix{Float64}(I,nconv,nconv)
+        tol = sqrt(sqrt(eps(real(T)))^3)
+        U, vals, V, resids, stats = PRIMME.svds(A, k, verbosity = 1, tol=tol)
+        nconv = size(U,2)
+        svd_ref = svd(A)
+        @test U isa AbstractMatrix{T}
+        @test V isa AbstractMatrix{T}
+        @test vals isa AbstractVector{real(T)}
+        @test svd_ref.S[1:k] ≈ vals
+        @test abs.(svd_ref.U[:, 1:k]' * U) ≈ Matrix{Float64}(I,nconv,nconv)
   end
 
 end
-@testset "basic eigs $T" for T in [Float64, ComplexF64]
+@testset "basic eigs $T" for T in [Float64, ComplexF64, Float32, ComplexF32]
     let n=200, k=2
         q,_ = qr(randn(T, n, n))
-        A = q * Diagonal(exp.(5*rand(n))) * q'
-        A = 0.5 * (A + A')
-        eigPrimme = PRIMME.eigs(A, k, verbosity=1)
+        A = q * Diagonal(exp.(5*rand(real(T),n))) * q'
+        A = T(0.5) * (A + A')
+        tol = sqrt(sqrt(eps(real(T)))^3)
+        vals, vecs, resids, stats = PRIMME.eigs(A, k, verbosity=1, tol=tol)
         E = eigen(A)
         idx = sortperm(E.values, by=abs, rev=true)
-        nconv = length(eigPrimme[1])
-        valsLAPACK = [E.values[i] for i in idx[1:nconv]]
-        vecsLAPACK = E.vectors[:,idx[1:nconv]]
-        vecsPrimme = eigPrimme[2]
-        @test vecsPrimme isa AbstractMatrix{T}
-        @test valsLAPACK ≈ eigPrimme[1]
-        @test abs.(vecsLAPACK' * vecsPrimme) ≈ Matrix{Float64}(I,nconv,nconv)
+        nconv = length(vals)
+        vals_ref = [E.values[i] for i in idx[1:nconv]]
+        vecs_ref = E.vectors[:,idx[1:nconv]]
+        vecs = vecs
+        @test vecs isa AbstractMatrix{T}
+        @test vals isa AbstractVector{real(T)}
+        @test vals_ref ≈ vals
+        @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
   end
 end
 
@@ -37,20 +43,21 @@ end
     let n=200, k=10
         A = randn(n, n)
         A = 0.5 * (A + A')
-        svdPrimme = (@test_logs (:info,r"did not converge") PRIMME.svds(A, k, verbosity = 1, maxMatvecs=2, unconvThrows=false))
-        nconv = size(svdPrimme[1],2)
+        U, vals, V, resids, stats = (@test_logs (:warn,r"did not converge") PRIMME.svds(A, k, verbosity = 1, maxMatvecs=2, check=:warn))
+        nconv = size(U,2)
         @test nconv < k
-        @test_throws PRIMME.PRIMMEException PRIMME.svds(A, k, verbosity = 1, maxMatvecs=2, unconvThrows=true)
-        eigsPrimme = (@test_logs (:info,r"did not converge") PRIMME.eigs(A, k, verbosity = 1, maxMatvecs=2, unconvThrows=false))
-        nconv = size(eigsPrimme[1],2)
+        @test_throws PRIMME.PRIMMEException PRIMME.svds(A, k, verbosity = 1, maxMatvecs=2, check=:throw)
+        vals, vecs, _, _ = (@test_logs (:warn,r"did not converge") PRIMME.eigs(A, k, verbosity = 1, maxMatvecs=2, check=:warn))
+        nconv = size(vecs,2)
         @test nconv < k
-        @test_throws PRIMME.PRIMMEException PRIMME.eigs(A, k, verbosity = 1, maxMatvecs=2, unconvThrows=true)
+        @test_throws PRIMME.PRIMMEException PRIMME.eigs(A, k, verbosity = 1, maxMatvecs=2, check=:throw)
     end
 end
 
 @testset "eigs, 'which' specified" begin
     @testset "eigs n=$n which=$which" for n in [200],
-                                          which in [:SA, :LA, :SM, :LM]
+                                          which in [:SR, :LR, :SM, :LM]
+        T = Float64
         k = 5
         q,_ = qr(randn(n,n))
         if which != :SM
@@ -62,16 +69,17 @@ end
         end
         A = q * Diagonal(d) * q'
         A = 0.5 * (A + A')
-        eigPrimme = PRIMME.eigs(A, k, verbosity=1, which=which)
+        tol = sqrt(sqrt(eps(real(T)))^3)
+        vals, vecs, resids, stats = PRIMME.eigs(A, k, verbosity=1, which=which, tol=tol)
         E = eigen(A)
         idx = sortperm(E.values, by= (which in (:SM,:LM) ? abs : identity),
-                       rev=(which in (:LA,:LM)))
-        nconv = length(eigPrimme[1])
+                       rev=(which in (:LR,:LM)))
+        nconv = length(vals)
         @test nconv == k
-        valsLAPACK = [E.values[i] for i in idx[1:nconv]]
-        vecsLAPACK = E.vectors[:,idx[1:nconv]]
-        @test valsLAPACK ≈ eigPrimme[1]
-        @test abs.(vecsLAPACK'eigPrimme[2]) ≈ Matrix{Float64}(I,nconv,nconv)
+        vals_ref = [E.values[i] for i in idx[1:nconv]]
+        vecs_ref = E.vectors[:,idx[1:nconv]]
+        @test vals_ref ≈ vals
+        @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
     end
 end
 
@@ -79,14 +87,16 @@ end
     @testset "svds m=$m, n=$n, k=$k" for (m,n) in ((200,200),(200,400),(400,200)),
                                          k = [1,10],
                                          method = [PRIMME.svds_hybrid, PRIMME.svds_normalequations, PRIMME.svds_augmented]
+        T = Float64
         A = randn(m, n)
-        svdPrimme = PRIMME.svds(A, k, method = method)
-        nconv = size(svdPrimme[1],2)
+        tol = sqrt(sqrt(eps(real(T)))^3)
+        U, vals, V, resids, stats = PRIMME.svds(A, k, method = method, tol=tol)
+        nconv = size(U,2)
         @test nconv == k
-        svdLAPACK = svd(A)
-        @test svdLAPACK.S[1:nconv] ≈ svdPrimme[2]
-        @test abs.(svdLAPACK.U[:, 1:nconv]'svdPrimme[1]) ≈ Matrix{Float64}(I,nconv,nconv)
-        @test abs.(svdLAPACK.V[:, 1:nconv]'svdPrimme[3]) ≈ Matrix{Float64}(I,nconv,nconv)
+        svd_ref = svd(A)
+        @test svd_ref.S[1:nconv] ≈ vals
+        @test abs.(svd_ref.U[:, 1:nconv]' * U) ≈ Matrix{Float64}(I,nconv,nconv)
+        @test abs.(svd_ref.V[:, 1:nconv]' * V) ≈ Matrix{Float64}(I,nconv,nconv)
     end
 end
 
@@ -95,11 +105,12 @@ end
         k = 2
         mn = min(m,n)
         A = randn(T, m, n)
-        U,S,V,resids,stats = PRIMME.svds(A, k, verbosity = 1, which=:SR)
+        tol = sqrt(sqrt(eps(real(T)))^3)
+        U,S,V,resids,stats = PRIMME.svds(A, k, verbosity = 1, which=:SR, tol=tol)
         nconv = size(U,2)
         @test nconv == k
-        svalsLAPACK = svdvals(A)
-        @test svalsLAPACK[mn:-1:mn-nconv+1] ≈ S
+        svals_ref = svdvals(A)
+        @test svals_ref[mn:-1:mn-nconv+1] ≈ S
         @test norm(A * V - U * Diagonal(S)) < max(m,n) * 1e-6
     end
 end
@@ -113,15 +124,16 @@ end
         v,_ = qr!(randn(T,n,n))
         d = collect(1:mn)
         A = u * diagm(m,n,d) * v'
-        svalsLAPACK = svdvals(A)
+        svals_ref = svdvals(A)
         itgt = mn >> 1
         # bias to avoid ambiguous ordering
-        tgt = (3//5) * svalsLAPACK[itgt] + (2//5) * svalsLAPACK[itgt+1]
-        idxp = sortperm(abs.(svalsLAPACK .- tgt))
-        U,S,V,resids,stats = PRIMME.svds(A, k, verbosity = 1, which=:SM, sigma=tgt)
+        tgt = (3//5) * svals_ref[itgt] + (2//5) * svals_ref[itgt+1]
+        idxp = sortperm(abs.(svals_ref .- tgt))
+        tol = sqrt(sqrt(eps(real(T)))^3)
+        U,S,V,resids,stats = PRIMME.svds(A, k, verbosity = 1, which=:SM, sigma=tgt, tol=tol)
         nconv = size(U,2)
         @test nconv == k
-        @test svalsLAPACK[idxp[1:nconv]] ≈ S
+        @test svals_ref[idxp[1:nconv]] ≈ S
         @test norm(A * V - U * Diagonal(S)) < max(m,n) * 1e-6
     end
 end
@@ -132,16 +144,17 @@ end
     d = zero(T) .+ collect(1:n)
     A = Diagonal(d)
     k=2
-    eigPrimme = PRIMME.eigs(A, k, verbosity=1, which=:SM, shifts=tgts)
+    tol = sqrt(sqrt(eps(real(T)))^3)
+    vals, vecs, resids, stats = PRIMME.eigs(A, k, verbosity=1, which=:SM, shifts=tgts, tol=tol)
     E = eigen(A)
     idx = sortperm(E.values, by= x->minimum([abs(x-tgt) for tgt in tgts]))
-    nconv = length(eigPrimme[1])
+    nconv = length(vals)
     @test nconv == k
     #idx = sort(idx[1:nconv], by=x->E.values[x], rev=true)
-    valsLAPACK = [E.values[i] for i in idx[1:nconv]]
-    vecsLAPACK = E.vectors[:,idx[1:nconv]]
-    @test valsLAPACK ≈ eigPrimme[1]
-    @test abs.(vecsLAPACK'eigPrimme[2]) ≈ Matrix{Float64}(I,nconv,nconv)
+    vals_ref = [E.values[i] for i in idx[1:nconv]]
+    vecs_ref = E.vectors[:,idx[1:nconv]]
+    @test vals_ref ≈ vals
+    @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
 
 end
 
@@ -155,36 +168,34 @@ end
     k=2
     E = eigen(A)
     idx = sortperm(E.values, by= x->abs(x-tgt))
+    tol = sqrt(sqrt(eps(real(T)))^3)
 
     # baseline
-    eigPrimme = PRIMME.eigs(A, k, verbosity=1, which=:SM, shifts=tgt)
-    stats = eigPrimme[4]
+    vals, vecs, resids, stats = PRIMME.eigs(A, k, verbosity=1, which=:SM, shifts=tgt, tol=tol)
     @test stats.numPreconds == 0
 
     # preconditioner provided as matrix
     P = Diagonal(diag(A)) - tgt * I
-    eigPrimme = PRIMME.eigs(A, k, verbosity=1, which=:SM, shifts=tgt, P=P)
-    stats = eigPrimme[4]
+    vals, vecs, resids, stats = PRIMME.eigs(A, k, verbosity=1, which=:SM, shifts=tgt, P=P, tol=tol)
     @test stats.numPreconds > 0
-    nconv = length(eigPrimme[1])
+    nconv = length(vals)
     @test nconv == k
-    valsLAPACK = [E.values[i] for i in idx[1:nconv]]
-    vecsLAPACK = E.vectors[:,idx[1:nconv]]
-    @test valsLAPACK ≈ eigPrimme[1]
-    @test abs.(vecsLAPACK'eigPrimme[2]) ≈ Matrix{Float64}(I,nconv,nconv)
+    vals_ref = [E.values[i] for i in idx[1:nconv]]
+    vecs_ref = E.vectors[:,idx[1:nconv]]
+    @test vals_ref ≈ vals
+    @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
 
     # preconditioner provided as factorization
     P = Diagonal(diag(A)) - tgt * I
     pp = 0.001 * randn(n,n)
     pp = 0.5 * (pp + pp')
     P = bunchkaufman(P + pp)
-    eigPrimme = PRIMME.eigs(A, k, verbosity=1, which=:SM, shifts=tgt, P=P)
-    stats = eigPrimme[4]
+    vals, vecs, resids, stats = PRIMME.eigs(A, k, verbosity=1, which=:SM, shifts=tgt, P=P, tol=tol)
     @test stats.numPreconds > 0
-    nconv = length(eigPrimme[1])
+    nconv = length(vals)
     @test nconv == k
-    valsLAPACK = [E.values[i] for i in idx[1:nconv]]
-    vecsLAPACK = E.vectors[:,idx[1:nconv]]
-    @test valsLAPACK ≈ eigPrimme[1]
-    @test abs.(vecsLAPACK'eigPrimme[2]) ≈ Matrix{Float64}(I,nconv,nconv)
+    vals_ref = [E.values[i] for i in idx[1:nconv]]
+    vecs_ref = E.vectors[:,idx[1:nconv]]
+    @test vals_ref ≈ vals
+    @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
 end

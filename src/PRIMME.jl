@@ -40,13 +40,48 @@ function _print(r::Ref{C_svds_params})
     ccall((:primme_svds_display_params, libprimme), Cvoid, (C_svds_params,), r[])
 end
 
+"""
+    PRIMME.svds(A, k::Integer; kwargs...) => U,S,V,resids,stats
+
+computes some (`k`) singular triplets (partial SVD) of the matrix `A`
+Returns `S`, a vector of `k` singular values; `U`, a `n×k` matrix of left singular vectors;
+`V`, a `n×k` matrix of right singular vectors; `resids`, a vector of residual norms;
+and `stats`, a structure with an account of the work done.
+
+# Keyword args
+ (names in square brackes are analogues in PRIMME documentation)
+
+- `which::Symbol`, indicating which triplets should be computed.
+   - `:SR`: smallest algebraic
+   - `:SM`: closest to `sigma` (or 0 if not provided)
+   - `:LR`: largest magnitude (default)
+- `check::Symbol`: (`:throw,:warn,:quiet`) what to do on convergence failure
+- `tol`
+- `sigma`
+- `maxBasisSize`
+- `verbosity::Int`
+- `method::SvdsPresetMethod`
+- `method1::EigsPresetMethod`: algorithm for first stage
+- `method2::EigsPresetMethod`: algorithm for seconde stage, if hybrid
+- `maxMatvecs`
+- `shifts`
+- `P_AtA`: preconditioner
+- `P_AAt`: preconditioner
+- `P_B`: preconditioner
+- `fullStats::Bool`: whether to return stats from eigensolver stage(s)
+- (some others may be passed to the constructor for `C_svds_params`)
+"""
+function svds end
+
 for (func, elty, relty) in
     ((:dprimme_svds, :Float64, :Float64),
      (:zprimme_svds, :ComplexF64, :Float64),
+     (:sprimme_svds, :Float32, :Float32),
+     (:cprimme_svds, :ComplexF32, :Float32),
      )
     @eval begin
 function _svds(r::Ref{C_svds_params}, ::Type{$elty};
-               v0=nothing, verbosity=1, unconvThrows=true, fullStats=false)
+               v0=nothing, verbosity=1, check=:throw, fullStats=false)
     m, n, k = r[].m, r[].n, r[].numSvals
     nlocal = r[].nLocal
     if nlocal <= 0
@@ -85,11 +120,15 @@ function _svds(r::Ref{C_svds_params}, ::Type{$elty};
 
     if err != 0
         infoRet = err in (-3, -103, -203)
-        if infoRet && (verbosity > 0) && (r[].procID == 0)
-                @info "some triplets did not converge in allowed maxMatvecs"
-                show(r[].stats); println()
+        if r[].procID == 0
+            if infoRet && (check == :warn)
+                @warn "some triplets did not converge in allowed maxMatvecs"
+                if verbosity > 0
+                    show(r[].stats); println()
+                end
+            end
         end
-        if unconvThrows || !infoRet
+        if check == :throw || !infoRet
             free(r)
             throw(PRIMMEException(Int(err), @_fnq($func)))
         end
@@ -199,31 +238,13 @@ function _wrap_matldivs_svds(
     return ldiv_fp
 end
 
-"""
-    PRIMME.svds(A, k::Integer; kwargs...) => U,S,V,resids,stats
 
-computes some (`k`) singular triplets (partial SVD) of the matrix `A`
-
-Returns `S`, a vector of `k` singular values; `U`, a `k×n` matrix of left singular vectors;
-`V`, a `k×n` matrix of right singular vectors; `resids`, a vector of residual norms;
-and `stats`, a structure with an account of the work done.
-
-# Keyword args
- (names in square brackes are analogues in PRIMME documentation)
-
-- `which::Symbol`, indicating which triplets should be computed.
- - `:SA`: smallest algebraic
- - `:SM`: closest to `sigma` (or 0 if not provided)
- - `:LM`: largest magnitude (default)
-- `unconvThrows::Bool`: if true, convergence failure raises an exception
-- lots of others I have not explained yet
-"""
 function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
               elt = nothing, m = nothing, n = nothing, # usu. get from A
-              which = :LR,
-              tol = 1e-12,
+              which::Symbol = :LR,
+              tol::Union{Nothing,Real} = nothing,
               sigma::Union{Nothing,Real} = nothing,
-              maxBasisSize = nothing,
+              maxBasisSize::Union{Nothing,Integer} = nothing,
               verbosity::Int = 0,
               method::Union{Nothing,SvdsPresetMethod} = nothing,
               method1::Union{Nothing,EigsPresetMethod} = nothing,
@@ -233,8 +254,8 @@ function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
               P_AtA = nothing,
               P_AAt = nothing,
               P_B = nothing,
-              fullStats = false,
-              unconvThrows = false,
+              fullStats::Bool = false,
+              check::Symbol = :throw,
               kwargs...
               )
     if A isa Ptr
@@ -247,6 +268,9 @@ function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
         m, n = size(A)
     end
     RT = real(T)
+    if tol === nothing
+        tol = sqrt(eps(RT))
+    end
     r = svds_initialize()
     mul_fp = _wrap_matvec_svds(A)
     r[:m]            = m
@@ -319,19 +343,54 @@ function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
     end
     @GC.preserve mul_fp precon_fp shiftsx begin
         r[:matrixMatvec] = Base.unsafe_convert(Ptr{Cvoid}, mul_fp)
-        out = _svds(r, T; fullStats=fullStats, unconvThrows=unconvThrows, verbosity=verbosity)
+        out = _svds(r, T; fullStats=fullStats, check=check, verbosity=verbosity)
     end
     free(r)
     return out
 end
 
+
+"""
+    PRIMME.eigs(A, k::Integer; kwargs...) => Λ,V,resids,stats
+
+computes some (`k`) eigen-pairs of the `n×n` Hermitian matrix `A`
+
+Returns `Λ`, a vector of `k` eigenvalues; `V`, a `n×k` matrix of right eigenvectors;
+`resids`, a vector of residual norms; and `stats`, a structure with an account of the
+ work done.
+
+# Keyword args
+ (names in square brackes are analogues in PRIMME documentation)
+- `which::Symbol`, indicating which pairs should be computed. If a target `sigma` is provided, `:SM` and `:LM` refer to distance from the target, otherwise 'sigma' is implicitly zero.
+
+  - `:SR`: smallest algebraic
+  - `:SM`: smallest magnitude (default if `sigma` is provided)
+  - `:LR`: largest algebraic
+  - `:LM`: largest magnitude (default)
+  - `:CGT`: closest greater than or equal to target
+  - `:CLT`: closest less than or equal to target
+ - `sigma::Real`, a target value; see `which` above.
+- `tol`: convergence criterion (residual norm relative to estimated norm of `A`) [`eps`]
+- `maxiter`: bound on outer iterations [`maxOuterIterations`]
+- `maxMatvecs`: bound on calls to matrix-vector multiplication function
+- `P`: preconditioning matrix or (preferably) factorization
+- `B`: mass matrix
+- `verbosity::Int`: detail of diagnostics to report to standard output [`reportLevel`]
+- `check::Symbol`: (`:throw,:warn,:quiet`) what to do on convergence failure
+Some other keyword arguments, such as those passed to internal functions, might be
+properly documented someday.
+"""
+function eigs end
+
 for (func, elty, relty) in
     ((:dprimme, :Float64, :Float64),
      (:zprimme, :ComplexF64, :Float64),
+     (:sprimme, :Float32, :Float32),
+     (:cprimme, :ComplexF32, :Float32),
      )
     @eval begin
 function _eigs(r::Ref{C_params},::Type{$elty};
-                       v0=nothing, verbosity=1, unconvThrows=true)
+                       v0=nothing, verbosity=1, check=:throw)
     n, k = r[].n, r[].numEvals
     nlocal = r[].nLocal
     if nlocal <= 0
@@ -372,11 +431,15 @@ function _eigs(r::Ref{C_params},::Type{$elty};
     end
     if err != 0
         infoRet = err == -3
-        if infoRet && (verbosity > 0) && (r[].procID == 0)
-            @info "some pairs did not converge in allowed maxMatvecs"
-            show(r[].stats); println()
+        if r[].procID == 0
+            if infoRet && (check == :warn)
+                @warn "some pairs did not converge in allowed maxMatvecs"
+                if verbosity > 0
+                    show(r[].stats); println()
+                end
+            end
         end
-        if unconvThrows || !infoRet
+        if check == :throw || !infoRet
             free(r)
             throw(PRIMMEException(Int(err), @_fnq($func)))
         end
@@ -396,7 +459,7 @@ end
     end # eval block
 end # type loop
 
-const witches = Dict( :LA => largest, :LM => largest_abs, :SA => smallest,
+const witches = Dict( :LR => largest, :LM => largest_abs, :SR => smallest,
                       :CGT => closest_geq, :CLT => closest_leq, :SM => closest_abs )
 
 _wrap_matvec(A::Ptr{Cvoid}) = A
@@ -526,50 +589,21 @@ function _wrap_matldiv(P::Union{AbstractMatrix{T},Factorization{T}}, P2=nothing)
     return ldiv_fp
 end
 
-"""
-    PRIMME.eigs(A, k::Integer; kwargs...) => Λ,V,resids,stats
-
-computes some (`k`) eigen-pairs of the matrix `A`
-
-Returns `Λ`, a vector of `k` eigenvalues; `V`, a `k×n` matrix of eigenvectors;
-`resids`, a vector of residual norms; and `stats`, a structure with an account of the
- work done.
-
-# Keyword args (names in square brackes are analogues in PRIMME documentation):
-
-- `which::Symbol`, indicating which pairs should be computed. If a target `sigma` is provided, `:SM` and `:LM` refer to distance from the target.
-
- - `:SA`: smallest algebraic
- - `:SM`: smallest magnitude (default if `sigma` is provided)
- - `:LA`: largest algebraic
- - `:LM`: largest magnitude (default)
- - `:CGT`: closest greater than or equal to target
- - `:CLT`: closest less than or equal to target
-- `sigma::Real`, a target value; see `which` above.
-- `tol`: convergence criterion (residual norm relative to estimated norm of `A`), called [`eps`]
-- `maxiter`: bound on outer iterations [`maxOuterIterations`]
-- `maxMatvecs`: bound on calls to matrix-vector multiplication function
-- `P`: preconditioning matrix or (preferably) factorization
-- `B`: mass matrix
-- `verbosity::Int`: detail of diagnostics to report to standard output [`reportLevel`]
-- `unconvThrows::Bool`: if true, convergence failure raises an exception
-"""
 function eigs(A::Union{Ptr{Nothing},AbstractMatrix}, k::Integer = 5;
               elt = nothing, n = nothing, # usu. get from A
               which::Symbol = :default,
-              tol = 1e-12,
+              tol::Union{Nothing,Real} = nothing,
               sigma::Union{Nothing,Real}=nothing,
               maxBasisSize = nothing,
               verbosity::Integer = 0,
-              maxiter = 1000,
-              maxMatvecs = nothing,
+              maxiter::Integer = 1000,
+              maxMatvecs::Union{Nothing,Integer} = nothing,
               shifts=nothing,
               method::Union{Nothing,EigsPresetMethod}=nothing,
               P::Union{Nothing,AbstractMatrix,Factorization}=nothing,
               P2::Union{Nothing,AbstractMatrix,Factorization}=nothing,
               B::Union{Nothing,AbstractMatrix}=nothing,
-              skipchecks=false,
-              unconvThrows = true,
+              check::Symbol = :throw,
               kwargs...
               )
     if A isa Ptr
@@ -588,6 +622,9 @@ function eigs(A::Union{Ptr{Nothing},AbstractMatrix}, k::Integer = 5;
         end
     end
     RT = real(T)
+    if tol === nothing
+        tol = sqrt(eps(RT))
+    end
     if k <= 0
         throw(ArgumentError("k must be positive"))
     end
@@ -685,7 +722,7 @@ function eigs(A::Union{Ptr{Nothing},AbstractMatrix}, k::Integer = 5;
             end
         end
         # @show r[]
-        out = _eigs(r, T; unconvThrows=unconvThrows, verbosity=verbosity)
+        out = _eigs(r, T; check=check, verbosity=verbosity)
     end
     free(r)
     return out
