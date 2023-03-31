@@ -199,3 +199,54 @@ end
     @test vals_ref ≈ vals
     @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
 end
+
+# this is intended as a minimal operator type
+struct MyLinOp{T,TA}
+    A::TA
+    hflag::Bool
+    MyLinOp(A::TA) where {TA <: AbstractMatrix} = new{eltype(A),TA}(A,ishermitian(A))
+end
+LinearAlgebra.mul!(y,lop::MyLinOp,x) = mul!(y,lop.A,x)
+Base.size(lop::MyLinOp) = size(lop.A)
+Base.size(lop::MyLinOp,i::Integer) = size(lop.A,i)
+Base.eltype(lop::MyLinOp{T}) where {T} = T
+LinearAlgebra.adjoint(lop::MyLinOp) = lop.hflag ? lop : MyLinOp(lop.A')
+LinearAlgebra.issymmetric(lop::MyLinOp{T}) where {T} = (T <: Real) ? lop.hflag : false
+LinearAlgebra.ishermitian(lop::MyLinOp) = lop.hflag
+
+@testset "linop svds $T" for T in [Float64, ComplexF64]
+    let n=100, m=200, k=10
+        Am = randn(T, m, n)
+        A = MyLinOp(Am)
+        tol = sqrt(sqrt(eps(real(T)))^3)
+        U, vals, V, resids, stats = PRIMME.svds(A, k, verbosity = 1, tol=tol)
+        nconv = size(U,2)
+        svd_ref = svd(Am)
+        @test U isa AbstractMatrix{T}
+        @test V isa AbstractMatrix{T}
+        @test vals isa AbstractVector{real(T)}
+        @test svd_ref.S[1:k] ≈ vals
+        @test abs.(svd_ref.U[:, 1:k]' * U) ≈ Matrix{Float64}(I,nconv,nconv)
+  end
+
+end
+@testset "linop eigs $T" for T in [Float64, ComplexF64, Float32, ComplexF32]
+    let n=200, k=2
+        q,_ = qr(randn(T, n, n))
+        A = q * Diagonal(exp.(5*rand(real(T),n))) * q'
+        A = T(0.5) * (A + A')
+        Aop = MyLinOp(A)
+        tol = sqrt(sqrt(eps(real(T)))^3)
+        vals, vecs, resids, stats = PRIMME.eigs(Aop, k, verbosity=1, tol=tol)
+        E = eigen(A)
+        idx = sortperm(E.values, by=abs, rev=true)
+        nconv = length(vals)
+        vals_ref = [E.values[i] for i in idx[1:nconv]]
+        vecs_ref = E.vectors[:,idx[1:nconv]]
+        vecs = vecs
+        @test vecs isa AbstractMatrix{T}
+        @test vals isa AbstractVector{real(T)}
+        @test vals_ref ≈ vals
+        @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
+  end
+end

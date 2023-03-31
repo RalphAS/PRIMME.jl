@@ -155,10 +155,10 @@ end
     end # eval block
 end # type loop
 
-_wrap_matvec_svds(A::Ptr{Cvoid}) = A
-_wrap_matvec_svds(A::Base.CFunction) = A
+_wrap_matvec_svds(A::Ptr{Cvoid},::Type{T}) where{T} = A
+_wrap_matvec_svds(A::Base.CFunction,::Type{T}) where {T} = A
 
-function _wrap_matvec_svds(A::AbstractMatrix{T}) where {T}
+function _wrap_matvec_svds(A,::Type{T}) where {T}
     # matrix-vector product, y = a * x (or y = a^t * x), where
     # (ELT *x, PRIMME_INT *ldx, ELT *y, PRIMME_INT *ldy, int *blockSize,
     #  int *transpose, struct primme_svds_params *primme_svds, int *ierr);
@@ -239,7 +239,7 @@ function _wrap_matldivs_svds(
 end
 
 
-function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
+function svds(A, k::Integer = 5;
               elt = nothing, m = nothing, n = nothing, # usu. get from A
               which::Symbol = :LR,
               tol::Union{Nothing,Real} = nothing,
@@ -272,7 +272,7 @@ function svds(A::Union{Ptr{Nothing}, AbstractMatrix}, k::Integer = 5;
         tol = sqrt(eps(RT))
     end
     r = svds_initialize()
-    mul_fp = _wrap_matvec_svds(A)
+    mul_fp = _wrap_matvec_svds(A,T)
     r[:m]            = m
     r[:n]            = n
     r[:numSvals]     = k
@@ -462,10 +462,10 @@ end # type loop
 const witches = Dict( :LR => largest, :LM => largest_abs, :SR => smallest,
                       :CGT => closest_geq, :CLT => closest_leq, :SM => closest_abs )
 
-_wrap_matvec(A::Ptr{Cvoid}) = A
-_wrap_matvec(A::Base.CFunction) = A
+_wrap_matvec(A::Ptr{Cvoid},::Type{T}) where {T} = A
+_wrap_matvec(A::Base.CFunction,::Type{T}) where {T} = A
 
-function _wrap_matvec(A::AbstractMatrix{T}) where {T}
+function _wrap_matvec(A,::Type{T}) where {T}
     function mv(xp::Ptr{Tmv}, ldxp::Ptr{PRIMME_INT},
                 yp::Ptr{Tmv}, ldyp::Ptr{PRIMME_INT},
                 blockSizep::Ptr{Cint}, parp::Ptr{C_params}, ierrp::Ptr{Cint}) where {Tmv}
@@ -589,7 +589,7 @@ function _wrap_matldiv(P::Union{AbstractMatrix{T},Factorization{T}}, P2=nothing)
     return ldiv_fp
 end
 
-function eigs(A::Union{Ptr{Nothing},AbstractMatrix}, k::Integer = 5;
+function eigs(A, k::Integer = 5;
               elt = nothing, n = nothing, # usu. get from A
               which::Symbol = :default,
               tol::Union{Nothing,Real} = nothing,
@@ -629,13 +629,13 @@ function eigs(A::Union{Ptr{Nothing},AbstractMatrix}, k::Integer = 5;
         throw(ArgumentError("k must be positive"))
     end
 
-    mul_fp = _wrap_matvec(A)
+    mul_fp = _wrap_matvec(A, T)
 
     if B !== nothing
         if (T <: Real && !issymmetric(B)) || !ishermitian(B)
             throw(ArgumentError("mass matrix/operator must be Hermitian"))
         end
-        Bmul_fp = _wrap_matvec(B)
+        Bmul_fp = _wrap_matvec(B, T)
     else
         Bmul_fp = Ptr{Cvoid}()
     end
