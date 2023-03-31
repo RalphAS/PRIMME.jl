@@ -9,20 +9,22 @@ using PRIMME: C_params, C_svds_params, PRIMME_INT
 using MPI
 MPI.Init()
 
-# FIXME: this should be stored in param.commInfo
 const commW = MPI.COMM_WORLD
 
+# For simplicity we just store the minimal MPI context in commInfo.
+# It could be a pointer to a struct including some problem-specific information.
 function getcomm(par::Union{C_params, C_svds_params})
-    MPI.Comm(unsafe_load(Base.unsafe_convert(Ptr{MPI.MPI_Comm}, par.commInfo)))
+    comm = MPI.Comm(unsafe_load(Base.unsafe_convert(Ptr{MPI.MPI_Comm}, par.commInfo)))
+    return comm
 end
 
 const ROOT_PROC = 0
 
-# if we made this a variable, we would need to use closures
+# if we made this a variable, we would need to use more closures
 const AELT = Float64
 #const AELT = ComplexF64
 
-# for this toy problem all procs get the whole matrix and manage their own part
+# for this toy problem all procs get the whole matrix and extract their own part
 const Aglobal = Ref(zeros(AELT,1,1))
 const Alocal = Ref(zeros(AELT,1,1))
 
@@ -47,7 +49,13 @@ function xmat(istart,nrows,n)
     copyto!(Asub, view(Aglobal[], istart:iend, :))
 end
 
-# distributed matrix-vector product
+# There are 3 Julia functions which must be defined and wrapped so that
+# they can be called by the PRIMME library code.
+# (Others would be needed for preconditioning and mass operators, but the Julia API
+# for those is not ready yet.)
+
+
+# 1. distributed matrix-vector product
 function mv(xp::Ptr{Tmv}, ldxp::Ptr{PRIMME_INT},
             yp::Ptr{Tmv}, ldyp::Ptr{PRIMME_INT},
             blockSizep::Ptr{Cint}, parp::Ptr{C_params}, ierrp::Ptr{Cint}) where {Tmv}
@@ -120,9 +128,7 @@ function _wrap_mv(x::T) where {T}
     return mul_fp
 end
 
-const ncalls = Ref(0)
-
-# broadcast from root process
+# 2. broadcast from root process
 function bcast(bufferp, countp, parp, ierrp)
     count = unsafe_load(countp)
     par = unsafe_load(parp)
@@ -130,10 +136,8 @@ function bcast(bufferp, countp, parp, ierrp)
     iproc = par.procID
     buffer = unsafe_wrap(Array, bufferp, (count,))
     ierr = 0
-    ncalls[] += 1
     try
         MPI.Bcast!(buffer, comm; root=ROOT_PROC)
-        # MPI.bcast(buffer, comm; root=ROOT_PROC)
     catch JE
         @warn "[$(iproc)] bcast threw $JE"
         ierr = 1
@@ -146,12 +150,13 @@ function _wrap_bcast(x::T) where {T}
     bcast_fp = @cfunction(bcast, Cvoid, (Ptr{T}, Ptr{Cint}, Ptr{C_params}, Ptr{Cint}))
     return bcast_fp
 end
+# some signatures differ for use in `svds`.
 function _wrap_bcast_svds(x::T) where {T}
     bcast_fp = @cfunction(bcast, Cvoid, (Ptr{T}, Ptr{Cint}, Ptr{C_svds_params}, Ptr{Cint}))
     return bcast_fp
 end
 
-# reduction from root process
+# 3. reduction from root process
 function global_sum(sendbufp, recvbufp, countp, parp, ierrp)
     count = unsafe_load(countp)
     # @show sendbufp
@@ -181,7 +186,6 @@ function _wrap_global_sum(x::T) where {T}
                     (Ptr{T}, Ptr{T}, Ptr{Cint}, Ptr{C_params}, Ptr{Cint}))
     return fp
 end
-# the signature is different for use in `svds`.
 function _wrap_global_sum_svds(x::T) where {T}
     fp = @cfunction(global_sum, Cvoid,
                     (Ptr{T}, Ptr{T}, Ptr{Cint}, Ptr{C_svds_params}, Ptr{Cint}))
@@ -233,7 +237,7 @@ function runme(n=1000)
 
     evals, evecsLocal, resids, stats = PRIMME.eigs(fp, nev; elt=AELT, n=n,
                                                    numProcs=nproc, procID=iproc,
-                                                   nLocal=nlocal, # commInfo=?
+                                                   nLocal=nlocal,
                                                    globalSumReal = sump,
                                                    broadcastReal = bcp,
                                                    commInfo = commp,
@@ -253,7 +257,6 @@ function runme(n=1000)
         evecs[i0:i1,:] .= view(xTmp, 1:counts[jp], :)
     end
     MPI.Barrier(comm)
-    println("ncalls: ",ncalls[])
 
     # check the results
     if iproc == 0
@@ -264,7 +267,7 @@ function runme(n=1000)
             res1[i] = norm(A*evecs[:,i] - evals[i] * evecs[:,i])
         end
         @show evals
-        println("computed/reported resids:")
+        println("computed/reported residuals:")
         display(hcat(res1, resids[1:nconv]))
         println()
     end
