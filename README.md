@@ -1,6 +1,8 @@
 # PRIMME.jl
 ![Lifecycle](https://img.shields.io/badge/lifecycle-experimental-orange.svg)
 [![GitHub CI Build Status](https://github.com/RalphAS/PRIMME.jl/workflows/CI/badge.svg)](https://github.com/RalphAS/PRIMME.jl/actions)
+[![codecov.io](http://codecov.io/github/RalphAS/PRIMME.jl/coverage.svg?branch=master)](http://codecov.io/github/RalphAS/PRIMME.jl?branch=master)
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://RalphAS.github.io/PRIMME.jl/dev)
 
 # Introduction
 
