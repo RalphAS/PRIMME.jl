@@ -12,17 +12,22 @@ For information on `PRIMME` itself, please refer to its
 [homepage](https://www.cs.wm.edu/~andreas/software/)
 or [Github site](https://github.com/primme/primme.git).
 
+## Status
+
+Basic functionality (`eigs`, `svds`) is implemented. Documentation is sparse.
+Preconditioners and mass matrices are not yet handled as flexibly as they should be.
+
 # Usage
 
-For the most part the Julia API resembles that of the Python and MATLAB versions in the
+The Julia API largely resembles that of the Python and MATLAB versions in the
 official PRIMME distribution. For the time being, users are referred to the associated
-documentation for most details. Docstrings for `eigs` and `svds` will emphasise the
+documentation for many details. Docstrings for `eigs` and `svds` will emphasise the
 peculiarities of the Julia wrappers, and the test suite should provide useful examples.
 
 ## Eigen-pairs
 
 As in some other iterative eigensolvers, a symbol is used to select which pairs are wanted,
-e.g. `:LR` for largest (real) value.
+e.g. `:LR` (`:SR`) for largest (smallest) real value.
 
 If `A` is a matrix and `k` is the number of desired pairs, a typical call is
 ```julia
@@ -36,23 +41,11 @@ If `A` is a matrix and `k` is the number of desired triples, a typical call is
 U, s, V, resids, stats = PRIMME.svds(A, k, which=:LM)
 ```
 
-## Distributed computation
-
-For sufficiently large problems, the runtime is dominated by matrix-vector multiplications
-(or operator applications). `PRIMME` allows for these to be distributed over multiple
-processes using MPI. Appropriate usage is problem-specific, but an illustration of the API
-is included in the `examples` folder.
-
 # Installation
 
 Until this package has been registered, it must be added to your depot verbosely:
 
 `]add https://github.com/RalphAS/PRIMME.jl.git`
-
-One will (obviously) need a compatibly built version of the PRIMME library, currently
-version v3.2. With luck, you can get one with this Pkg command:
-
-`]add https://github.com/RalphAS/PRIMME_jll.jl.git`
 
 For the time being, PRIMME_jll is a formal dependency; this may change if the author
 learns of real-world use cases where it is inadequate.
