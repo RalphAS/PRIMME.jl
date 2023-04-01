@@ -30,7 +30,7 @@ using PRIMME
         @test V isa AbstractMatrix{T}
         @test vals isa AbstractVector{real(T)}
         @test svd_ref.S[1:k] ≈ vals
-        @test abs.(svd_ref.U[:, 1:k]' * U) ≈ Matrix{Float64}(I,nconv,nconv)
+        @test norm(abs.(svd_ref.U[:, 1:k]' * U) - I) < 2*k*sqrt(eps(one(real(T))))
   end
 
 end
@@ -50,7 +50,7 @@ end
         @test vecs isa AbstractMatrix{T}
         @test vals isa AbstractVector{real(T)}
         @test vals_ref ≈ vals
-        @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
+        @test norm(abs.(vecs_ref' * vecs) - I) < 2*k*sqrt(eps(one(real(T))))
   end
 end
 
@@ -94,7 +94,7 @@ end
         vals_ref = [E.values[i] for i in idx[1:nconv]]
         vecs_ref = E.vectors[:,idx[1:nconv]]
         @test vals_ref ≈ vals
-        @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
+        @test norm(abs.(vecs_ref' * vecs) - I) < 2*k*sqrt(eps(one(real(T))))
     end
 end
 
@@ -110,8 +110,9 @@ end
         @test nconv == k
         svd_ref = svd(A)
         @test svd_ref.S[1:nconv] ≈ vals
-        @test abs.(svd_ref.U[:, 1:nconv]' * U) ≈ Matrix{Float64}(I,nconv,nconv)
-        @test abs.(svd_ref.V[:, 1:nconv]' * V) ≈ Matrix{Float64}(I,nconv,nconv)
+        t = 2*k*sqrt(eps(one(real(T))))
+        @test norm(abs.(svd_ref.U[:, 1:nconv]' * U) - I) < t
+        @test norm(abs.(svd_ref.V[:, 1:nconv]' * V) - I) < t
     end
 end
 
@@ -169,8 +170,7 @@ end
     vals_ref = [E.values[i] for i in idx[1:nconv]]
     vecs_ref = E.vectors[:,idx[1:nconv]]
     @test vals_ref ≈ vals
-    @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
-
+    @test norm(abs.(vecs_ref' * vecs) - I) < 2*k*sqrt(eps(one(real(T))))
 end
 
 @testset "eigs w/ preconditioning n=$n $T" for T in [Float64, ComplexF64], n in [25, 500]
@@ -198,7 +198,7 @@ end
     vals_ref = [E.values[i] for i in idx[1:nconv]]
     vecs_ref = E.vectors[:,idx[1:nconv]]
     @test vals_ref ≈ vals
-    @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
+    @test norm(abs.(vecs_ref' * vecs) - I) < 2*k*sqrt(eps(one(real(T))))
 
     # preconditioner provided as factorization
     P = Diagonal(diag(A)) - tgt * I
@@ -212,7 +212,7 @@ end
     vals_ref = [E.values[i] for i in idx[1:nconv]]
     vecs_ref = E.vectors[:,idx[1:nconv]]
     @test vals_ref ≈ vals
-    @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
+    @test norm(abs.(vecs_ref' * vecs) - I) < 2*k*sqrt(eps(one(real(T))))
 end
 
 # this is intended as a minimal operator type
@@ -241,7 +241,7 @@ LinearAlgebra.ishermitian(lop::MyLinOp) = lop.hflag
         @test V isa AbstractMatrix{T}
         @test vals isa AbstractVector{real(T)}
         @test svd_ref.S[1:k] ≈ vals
-        @test abs.(svd_ref.U[:, 1:k]' * U) ≈ Matrix{Float64}(I,nconv,nconv)
+        @test norm(abs.(svd_ref.U[:, 1:k]' * U) - I) < 2*k*sqrt(eps(one(real(T))))
   end
 
 end
@@ -262,6 +262,6 @@ end
         @test vecs isa AbstractMatrix{T}
         @test vals isa AbstractVector{real(T)}
         @test vals_ref ≈ vals
-        @test abs.(vecs_ref' * vecs) ≈ Matrix{Float64}(I,nconv,nconv)
+        @test norm(abs.(vecs_ref' * vecs) - I) < 2*k*sqrt(eps(one(real(T))))
   end
 end
