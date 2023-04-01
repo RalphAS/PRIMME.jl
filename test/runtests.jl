@@ -1,3 +1,18 @@
+const jll_flag = Ref(true)
+try
+    eval(:(using PRIMME_jll))
+catch JE
+    jll_flag[] = false
+end
+using PRIMME_jll
+if !jll_flag[]
+    println("attempting to make libprimme loadable")
+    fname = PRIMME_jll.libprimme_path
+    chmod(fname,0o555)
+else
+    println("JLL seems ok.")
+end
+
 using Test
 using LinearAlgebra
 using PRIMME
