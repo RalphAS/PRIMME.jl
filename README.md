@@ -52,6 +52,11 @@ Until this package has been registered, it must be added to your depot verbosely
 For the time being, PRIMME_jll is a formal dependency; this may change if the author
 learns of real-world use cases where it is inadequate.
 
+## Windows
+At the time of writing, the artifacts for PRIMME_jll in Windows have incorrect permission
+settings. There is a hack in the test suite which should fix this if you run
+`]test PRIMME` locally.
+
 # References
 The algorithms are described in
 [A.Stathopoulos and J.McCombs, ACM ToMS 37, 21 (2010)](https://doi.org/10.1145/1731022.1731031)
