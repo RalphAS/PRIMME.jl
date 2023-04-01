@@ -1,7 +1,7 @@
 # types for PRIMME.jl
 
 # FIXME: this should be exported from JLL
-const PRIMME_INT = Int
+const PRIMME_INT = Int64
 
 """
     PRIMMEException
