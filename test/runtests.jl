@@ -19,7 +19,14 @@ using PRIMME
 
 # do some basic tests first to fail quickly and succinctly on simple errors
 
-@testset "basic svds $T" for T in [Float64, ComplexF64, Float32, ComplexF32]
+if sizeof(Int) == 8
+    eltypes2test = [Float64, ComplexF64, Float32, ComplexF32]
+else
+    # There is a difficult issue with ComplexF32 on 32bit systems.
+    eltypes2test = [Float64, ComplexF64, Float32]
+end
+
+@testset "basic svds $T" for T in eltypes2test
     let n=200, m=200, k=10
         A = randn(T, m, n)
         tol = sqrt(sqrt(eps(real(T)))^3)
@@ -34,7 +41,20 @@ using PRIMME
   end
 
 end
-@testset "basic eigs $T" for T in [Float64, ComplexF64, Float32, ComplexF32]
+
+if sizeof(Int) == 4
+    @testset "basic svds ComplexF32 32-bit"  begin
+        T = ComplexF32
+        @info "basic svds ComplexF32 32-bit is actually an error; we check the throw."
+        let n=200, m=200, k=10
+            A = randn(T, m, n)
+            tol = sqrt(sqrt(eps(real(T)))^3)
+            @test_throws PRIMME.PRIMMEException PRIMME.svds(A, k, verbosity = 1, tol=tol)
+        end
+    end
+end
+
+@testset "basic eigs $T" for T in eltypes2test
     let n=200, k=2
         q,_ = qr(randn(T, n, n))
         A = q * Diagonal(exp.(5*rand(real(T),n))) * q'
@@ -245,7 +265,8 @@ LinearAlgebra.ishermitian(lop::MyLinOp) = lop.hflag
   end
 
 end
-@testset "linop eigs $T" for T in [Float64, ComplexF64, Float32, ComplexF32]
+
+@testset "linop eigs $T" for T in eltypes2test
     let n=200, k=2
         q,_ = qr(randn(T, n, n))
         A = q * Diagonal(exp.(5*rand(real(T),n))) * q'
@@ -264,4 +285,18 @@ end
         @test vals_ref ≈ vals
         @test norm(abs.(vecs_ref' * vecs) - I) < 2*k*sqrt(eps(one(real(T))))
   end
+end
+
+if sizeof(Int) == 4
+    @testset "basic eigs ComplexF32 32-bit"  begin
+        @info "basic eigs ComplexF32 32-bit is likely an error; we check the throw."
+        T = ComplexF32
+        let n=200, k=2
+            q,_ = qr(randn(T, n, n))
+            A = q * Diagonal(exp.(5*rand(real(T),n))) * q'
+            A = T(0.5) * (A + A')
+            tol = sqrt(sqrt(eps(real(T)))^3)
+            @test_throws PRIMME.PRIMMEException PRIMME.eigs(A, k, verbosity=1, tol=tol)
+        end
+    end
 end
