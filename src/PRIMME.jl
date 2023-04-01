@@ -168,17 +168,18 @@ function _wrap_matvec_svds(A,::Type{T}) where {T}
         tr, par = unsafe_load(trp), unsafe_load(parp)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
-
+        ml = Int(par.mLocal)
+        nl = Int(par.nLocal)
         if tr == 0
-            mul!( view(y, 1:par.mLocal, :), A, view(x, 1:par.nLocal, :))
+            mul!( view(y, 1:ml, :), A, view(x, 1:nl, :))
         else
-            mul!(view(y, 1:par.nLocal, :), A', view(x, 1:par.mLocal, :))
+            mul!(view(y, 1:nl, :), A', view(x, 1:ml, :))
         end
         unsafe_store!(ierrp, 0)
         return nothing
     end
     mul_fp = @cfunction($mv, Cvoid,
-        (Ptr{T}, Ptr{Int}, Ptr{T}, Ptr{Int}, Ptr{Cint}, Ptr{Cint},
+        (Ptr{T}, Ptr{PRIMME_INT}, Ptr{T}, Ptr{PRIMME_INT}, Ptr{Cint}, Ptr{Cint},
          Ptr{C_svds_params}, Ptr{Cint}))
 end
 
@@ -211,20 +212,22 @@ function _wrap_matldivs_svds(
         mode = unsafe_load(modep)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
-        copyto!(view(y, 1:par.nLocal, :), view(x, 1:par.nLocal, :))
+        ml = Int(par.mLocal)
+        nl = Int(par.nLocal)
+        copyto!(view(y, 1:nl, :), view(x, 1:nl, :))
         if mode == Cint(svds_op_AtA)
             if PF_AtA !== nothing
-                ldiv!(PF_AtA, view(y, 1:par.nLocal, :))
+                ldiv!(PF_AtA, view(y, 1:nl, :))
             end
             unsafe_store!(ierrp, 0)
         elseif mode == Cint(svds_op_AAt)
             if PF_AAt !== nothing
-                ldiv!(PF_AAt, view(y, 1:par.nLocal, :))
+                ldiv!(PF_AAt, view(y, 1:nl, :))
             end
             unsafe_store!(ierrp, 0)
         elseif mode == Cint(svds_op_augmented)
             if PF_B !== nothing
-                ldiv!(PF_B, view(y, 1:par.nLocal, :))
+                ldiv!(PF_B, view(y, 1:nl, :))
             end
             unsafe_store!(ierrp, 0)
         else
@@ -233,8 +236,8 @@ function _wrap_matldivs_svds(
         return nothing
     end
     ldiv_fp = @cfunction($mvP, Cvoid,
-                           (Ptr{T}, Ptr{Int}, Ptr{T}, Ptr{Int}, Ptr{Cint}, Ptr{Cint},
-                            Ptr{C_params}, Ptr{Cint}))
+                           (Ptr{T}, Ptr{PRIMME_INT}, Ptr{T}, Ptr{PRIMME_INT}, Ptr{Cint},
+                            Ptr{Cint}, Ptr{C_params}, Ptr{Cint}))
     return ldiv_fp
 end
 
@@ -474,12 +477,13 @@ function _wrap_matvec(A,::Type{T}) where {T}
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
 
-        mul!( view(y, 1:par.nLocal, :), A, view(x, 1:par.nLocal, :))
+        nl = Int(par.nLocal)
+        mul!( view(y, 1:nl, :), A, view(x, 1:nl, :))
         unsafe_store!(ierrp, 0)
         return nothing
     end
     mul_fp = @cfunction($mv, Cvoid,
-                        (Ptr{T}, Ptr{Int}, Ptr{T}, Ptr{Int}, Ptr{Cint},
+                        (Ptr{T}, Ptr{PRIMME_INT}, Ptr{T}, Ptr{PRIMME_INT}, Ptr{Cint},
                          Ptr{C_params}, Ptr{Cint}))
     return mul_fp
 end
@@ -521,7 +525,7 @@ function _wrap_matldiv(P::Union{AbstractMatrix{T},Factorization{T}}, P2=nothing)
         blockSize, par = Int(unsafe_load(blockSizep)), unsafe_load(parp)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
-        n = par.nLocal
+        n = Int(par.nLocal)
         if size(PF) != (n,n)
             unsafe_store!(ierrp, -2)
             return nothing
@@ -539,12 +543,12 @@ function _wrap_matldiv(P::Union{AbstractMatrix{T},Factorization{T}}, P2=nothing)
         blockSize, par = Int(unsafe_load(blockSizep)), unsafe_load(parp)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
-        n = par.nLocal
+        n = Int(par.nLocal)
         if size(PF) != (n,n)
             unsafe_store!(ierrp, -2)
             return nothing
         end
-        y[1:n, :] .= PF \ view(x, 1:par.nLocal, :)
+        y[1:n, :] .= PF \ view(x, 1:n, :)
         unsafe_store!(ierrp, 0)
         return nothing
     end
@@ -556,26 +560,26 @@ function _wrap_matldiv(P::Union{AbstractMatrix{T},Factorization{T}}, P2=nothing)
         blockSize, par = Int(unsafe_load(blockSizep)), unsafe_load(parp)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
-        n = par.nLocal
+        n = Int(par.nLocal)
         if (size(PF) != (n,n)) || (size(PF2) != (n,n))
             unsafe_store!(ierrp, -2)
             return nothing
         end
-        copyto!(view(y, 1:par.nLocal, :), view(x, 1:par.nLocal, :))
-        ldiv!(PF, view(y, 1:par.nLocal, :))
-        ldiv!(PF2, view(y, 1:par.nLocal, :))
+        copyto!(view(y, 1:n, :), view(x, 1:n, :))
+        ldiv!(PF, view(y, 1:n, :))
+        ldiv!(PF2, view(y, 1:n, :))
         unsafe_store!(ierrp, 0)
         return nothing
     end
     if isdefined(LinearAlgebra, nameof(typeof(PF)))
         if P2 !== nothing
             ldiv_fp = @cfunction($mvP2, Cvoid,
-                                 (Ptr{T}, Ptr{Int}, Ptr{T}, Ptr{Int}, Ptr{Cint},
-                                  Ptr{C_params}, Ptr{Cint}))
+                                 (Ptr{T}, Ptr{PRIMME_INT}, Ptr{T}, Ptr{PRIMME_INT},
+                                  Ptr{Cint}, Ptr{C_params}, Ptr{Cint}))
         else
             ldiv_fp = @cfunction($mvP, Cvoid,
-                                 (Ptr{T}, Ptr{Int}, Ptr{T}, Ptr{Int}, Ptr{Cint},
-                                  Ptr{C_params}, Ptr{Cint}))
+                                 (Ptr{T}, Ptr{PRIMME_INT}, Ptr{T}, Ptr{PRIMME_INT},
+                                  Ptr{Cint}, Ptr{C_params}, Ptr{Cint}))
         end
     else
         # probably a sparse factorization, inplace is too complicated
@@ -583,7 +587,7 @@ function _wrap_matldiv(P::Union{AbstractMatrix{T},Factorization{T}}, P2=nothing)
             throw(ArgumentError("two-part preconditioner is only constructed for LinearAlgebra types"))
         end
         ldiv_fp = @cfunction($mvPx, Cvoid,
-                             (Ptr{T}, Ptr{Int}, Ptr{T}, Ptr{Int}, Ptr{Cint},
+                             (Ptr{T}, Ptr{PRIMME_INT}, Ptr{T}, Ptr{PRIMME_INT}, Ptr{Cint},
                               Ptr{C_params}, Ptr{Cint}))
     end
     return ldiv_fp
