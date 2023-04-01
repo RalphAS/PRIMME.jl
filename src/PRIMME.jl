@@ -146,9 +146,9 @@ function _svds(r::Ref{C_svds_params}, ::Type{$elty};
     else
         stats = r[].stats
     end
-    return (reshape(localVecs[loffset .+ (1:(mlocal*nConv))], mlocal, nConv),
+    return (reshape(localVecs[loffset .+ (1:(mlocal*nConv))], Int(mlocal), Int(nConv)),
             svals,
-            reshape(localVecs[roffset .+ (1:(nlocal*nConv))], nlocal, nConv),
+            reshape(localVecs[roffset .+ (1:(nlocal*nConv))], Int(nlocal), Int(nConv)),
             rnorms,
             stats)
 end
