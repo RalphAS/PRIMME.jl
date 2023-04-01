@@ -163,7 +163,7 @@ function _wrap_matvec_svds(A,::Type{T}) where {T}
     # (ELT *x, PRIMME_INT *ldx, ELT *y, PRIMME_INT *ldy, int *blockSize,
     #  int *transpose, struct primme_svds_params *primme_svds, int *ierr);
     function mv(xp, ldxp, yp, ldyp, blockSizep, trp, parp, ierrp)
-        ldx, ldy = unsafe_load(ldxp), unsafe_load(ldyp)
+        ldx, ldy = Int(unsafe_load(ldxp)), Int(unsafe_load(ldyp))
         blockSize = Int(unsafe_load(blockSizep))
         tr, par = unsafe_load(trp), unsafe_load(parp)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
@@ -207,7 +207,7 @@ function _wrap_matldivs_svds(
                  yp::Ptr{Tmv}, ldyp::Ptr{PRIMME_INT},
                  blockSizep::Ptr{Cint}, modep::Ptr{Cint}, parp::Ptr{C_params},
                  ierrp::Ptr{Cint}) where {Tmv}
-        ldx, ldy = unsafe_load(ldxp), unsafe_load(ldyp)
+        ldx, ldy = Int(unsafe_load(ldxp)), Int(unsafe_load(ldyp))
         blockSize, par = Int(unsafe_load(blockSizep)), unsafe_load(parp)
         mode = unsafe_load(modep)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
@@ -472,7 +472,7 @@ function _wrap_matvec(A,::Type{T}) where {T}
     function mv(xp::Ptr{Tmv}, ldxp::Ptr{PRIMME_INT},
                 yp::Ptr{Tmv}, ldyp::Ptr{PRIMME_INT},
                 blockSizep::Ptr{Cint}, parp::Ptr{C_params}, ierrp::Ptr{Cint}) where {Tmv}
-        ldx, ldy = unsafe_load(ldxp), unsafe_load(ldyp)
+        ldx, ldy = Int(unsafe_load(ldxp)), Int(unsafe_load(ldyp))
         blockSize, par = Int(unsafe_load(blockSizep)), unsafe_load(parp)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
@@ -521,7 +521,7 @@ function _wrap_matldiv(P::Union{AbstractMatrix{T},Factorization{T}}, P2=nothing)
                  yp::Ptr{Tmv}, ldyp::Ptr{PRIMME_INT},
                  blockSizep::Ptr{Cint}, parp::Ptr{C_params},
                  ierrp::Ptr{Cint}) where {Tmv}
-        ldx, ldy = unsafe_load(ldxp), unsafe_load(ldyp)
+        ldx, ldy = Int(unsafe_load(ldxp)), Int(unsafe_load(ldyp))
         blockSize, par = Int(unsafe_load(blockSizep)), unsafe_load(parp)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
@@ -539,7 +539,7 @@ function _wrap_matldiv(P::Union{AbstractMatrix{T},Factorization{T}}, P2=nothing)
                  yp::Ptr{Tmv}, ldyp::Ptr{PRIMME_INT},
                  blockSizep::Ptr{Cint}, parp::Ptr{C_params},
                  ierrp::Ptr{Cint}) where {Tmv}
-        ldx, ldy = unsafe_load(ldxp), unsafe_load(ldyp)
+        ldx, ldy = Int(unsafe_load(ldxp)), Int(unsafe_load(ldyp))
         blockSize, par = Int(unsafe_load(blockSizep)), unsafe_load(parp)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
@@ -556,7 +556,7 @@ function _wrap_matldiv(P::Union{AbstractMatrix{T},Factorization{T}}, P2=nothing)
                  yp::Ptr{Tmv}, ldyp::Ptr{PRIMME_INT},
                  blockSizep::Ptr{Cint}, parp::Ptr{C_params},
                  ierrp::Ptr{Cint}) where {Tmv}
-        ldx, ldy = unsafe_load(ldxp), unsafe_load(ldyp)
+        ldx, ldy = Int(unsafe_load(ldxp)), Int(unsafe_load(ldyp))
         blockSize, par = Int(unsafe_load(blockSizep)), unsafe_load(parp)
         x = unsafe_wrap(Array, xp, (ldx, blockSize))
         y = unsafe_wrap(Array, yp, (ldy, blockSize))
